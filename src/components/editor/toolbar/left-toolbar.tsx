@@ -23,12 +23,14 @@ const tools: { id: EditorTool; label: string; shortcut?: string; icon: typeof Sq
   { id: "line", label: "Line", shortcut: "L", icon: Minus },
   { id: "text", label: "Text", shortcut: "T", icon: Type },
   { id: "image", label: "Image", icon: ImageIcon },
-  { id: "ai-region", label: "AI region", shortcut: "A", icon: Sparkles },
+  { id: "ai-region", label: "Create design", shortcut: "A", icon: Sparkles },
 ];
 
 export function LeftToolbar({ onUploadImage }: { onUploadImage: () => void }) {
   const tool = useEditorStore((s) => s.tool);
   const setTool = useEditorStore((s) => s.setTool);
+  const setAiPanelOpen = useEditorStore((s) => s.setAiPanelOpen);
+  const selected = useEditorStore((s) => s.selected);
 
   return (
     <aside
@@ -52,6 +54,13 @@ export function LeftToolbar({ onUploadImage }: { onUploadImage: () => void }) {
             onClick={() => {
               if (item.id === "image") {
                 onUploadImage();
+                return;
+              }
+              if (item.id === "ai-region") {
+                if (selected?.objectId) {
+                  setAiPanelOpen(true);
+                }
+                setTool(item.id);
                 return;
               }
               setTool(item.id);

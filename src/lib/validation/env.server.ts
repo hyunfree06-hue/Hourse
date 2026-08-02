@@ -12,6 +12,8 @@ const serverEnvSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional().default(""),
   OPENAI_API_KEY: z.string().optional().default(""),
   OPENAI_IMAGE_MODEL: z.string().default("gpt-image-2"),
+  /** Text-capable model for editable Design scene graphs (Responses API). */
+  OPENAI_DESIGN_MODEL: z.string().optional().default(""),
   BFL_API_KEY: z.string().optional().default(""),
   BFL_API_BASE_URL: z.string().url().default("https://api.bfl.ai/v1"),
   BFL_MODEL: z.string().default("flux-2-pro"),

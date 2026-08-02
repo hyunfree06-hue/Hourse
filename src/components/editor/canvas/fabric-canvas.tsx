@@ -93,6 +93,12 @@ export function FabricCanvas({
         fontSize?: number;
         fontWeight?: string | number;
         textAlign?: string;
+        text?: string;
+        fontFamily?: string;
+        lineHeight?: number;
+        charSpacing?: number;
+        strokeLineCap?: string;
+        strokeLineJoin?: string;
       };
       setSelected({
         objectId: anyObj.objectId,
@@ -110,6 +116,12 @@ export function FabricCanvas({
         fontSize: anyObj.fontSize,
         fontWeight: anyObj.fontWeight,
         textAlign: anyObj.textAlign,
+        text: anyObj.text,
+        fontFamily: anyObj.fontFamily,
+        lineHeight: anyObj.lineHeight,
+        charSpacing: anyObj.charSpacing,
+        strokeLineCap: anyObj.strokeLineCap,
+        strokeLineJoin: anyObj.strokeLineJoin,
       });
 
       if ((active as FabricObject & { objectRole?: string }).objectRole === "ai-region") {
@@ -355,6 +367,17 @@ export function FabricCanvas({
             "@/lib/canvas/load-fabric-image"
           );
           await rehydrateAssetImages(canvas);
+          const { migrateClippedGeneratedImages } = await import(
+            "@/lib/canvas/place-generated-image"
+          );
+          await migrateClippedGeneratedImages(
+            canvas as unknown as {
+              getObjects: () => unknown[];
+              add: (...o: unknown[]) => unknown;
+              remove: (...o: unknown[]) => unknown;
+              requestRenderAll: () => void;
+            },
+          );
         }
         canvas.backgroundColor = backgroundColor;
         canvas.requestRenderAll();

@@ -119,6 +119,10 @@ export type Database = {
           error_message: string | null;
           created_at: string;
           completed_at: string | null;
+          output_type: string | null;
+          scene_graph_json: Json | null;
+          design_version: number | null;
+          inserted_object_ids: string[] | null;
         };
         Insert: {
           id?: string;
@@ -141,6 +145,10 @@ export type Database = {
           error_message?: string | null;
           created_at?: string;
           completed_at?: string | null;
+          output_type?: string | null;
+          scene_graph_json?: Json | null;
+          design_version?: number | null;
+          inserted_object_ids?: string[] | null;
         };
         Update: Partial<Database["public"]["Tables"]["ai_generations"]["Insert"]>;
         Relationships: [];

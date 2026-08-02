@@ -8,8 +8,8 @@ const faqs = [
     a: "Yes. Sign in with Google to receive free credits immediately. No credit card required.",
   },
   {
-    q: "Which AI models are available?",
-    a: "You can choose between OpenAI image generation and Black Forest Labs FLUX. Select per generation based on style or cost.",
+    q: "How does AI design generation work?",
+    a: "Describe the design you want and Hourse creates an editable composition—text, shapes, and vectors you can move and restyle. Optional photographic layers are handled automatically when needed.",
   },
   {
     q: "What file formats can I export?",

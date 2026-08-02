@@ -154,13 +154,8 @@ describe("asset content route contracts", () => {
       path.join(process.cwd(), "src/components/editor/ai/ai-panel.tsx"),
       "utf8",
     );
-    expect(panel).toContain("trigger_after_insertion_success");
-    expect(panel).toContain("FABRIC_IMAGE_NOT_ADDED");
-    const retryFn = panel.slice(
-      panel.indexOf("async function retryInsertToCanvas"),
-      panel.indexOf("async function handleGenerate"),
-    );
-    expect(retryFn).not.toContain('"/api/ai/generations"');
-    expect(retryFn).toContain("insert_only_no_openai_no_credits");
+    expect(panel).toContain('window.dispatchEvent(new CustomEvent("hourse:dirty"))');
+    expect(panel).toContain("placeDesignScene");
+    expect(panel).not.toContain("retryInsertToCanvas");
   });
 });

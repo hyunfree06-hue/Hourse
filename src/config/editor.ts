@@ -19,8 +19,11 @@ export const editorConfig = {
     "objectRole",
     "generatedBy",
     "generationId",
+    "sourceType",
     "locked",
     "name",
+    "designBlockId",
+    "semanticRole",
   ] as const,
   /**
    * New local backup namespace. Legacy `canvasai:backup:` keys are still read

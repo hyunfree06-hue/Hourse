@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const aiModeSchema = z.enum(["generate", "edit", "replace"]);
+export const aiModeSchema = z.enum(["generate", "edit", "replace", "design"]);
 export const aiQualitySchema = z.enum(["fast", "standard", "high"]);
 export const aiProviderSchema = z.enum(["openai", "bfl"]);
 
@@ -24,13 +24,18 @@ export const createGenerationSchema = z.object({
   projectId: z.string().uuid(),
   prompt: z.string().trim().min(1).max(2000),
   negativePrompt: z.string().trim().max(1000).optional(),
-  provider: aiProviderSchema,
+  /** Optional for design mode — server orchestrates providers internally. */
+  provider: aiProviderSchema.optional().default("openai"),
   quality: aiQualitySchema.default("standard"),
-  mode: aiModeSchema.default("generate"),
+  mode: aiModeSchema.default("design"),
   selection: selectionDataSchema,
   idempotencyKey: z.string().min(8).max(128),
   referenceAssetId: z.string().uuid().optional(),
   fit: z.enum(["cover", "contain"]).default("cover"),
+  /** When refining an existing selection */
+  selectedObjectIds: z.array(z.string().min(1).max(64)).max(40).optional(),
+  selectedObjects: z.array(z.unknown()).max(40).optional(),
+  nearbySummary: z.string().max(2000).optional(),
 });
 
 export const saveProjectSchema = z

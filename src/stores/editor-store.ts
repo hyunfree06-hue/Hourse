@@ -29,6 +29,12 @@ export type SelectedProps = {
   fontSize?: number;
   fontWeight?: string | number;
   textAlign?: string;
+  text?: string;
+  fontFamily?: string;
+  lineHeight?: number;
+  charSpacing?: number;
+  strokeLineCap?: string;
+  strokeLineJoin?: string;
 };
 
 export type AiRegionState = {

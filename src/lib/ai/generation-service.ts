@@ -14,6 +14,10 @@ import {
   validateGeneratedImageBytes,
 } from "@/lib/ai/decode-generated-image";
 import type { GenerationProviderResult, GenerationProviderStatus } from "@/lib/ai/types";
+import {
+  DESIGN_SCENE_VERSION,
+  type EditableDesignScene,
+} from "@/lib/design-scene/schema";
 
 type Admin = ReturnType<typeof createServiceClient>;
 
@@ -258,4 +262,45 @@ export async function completeGeneration(input: {
     signedUrl: signed?.signedUrl ?? null,
     asset,
   };
+}
+
+/**
+ * Persist a validated editable design scene (no raster output asset required).
+ */
+export async function completeDesignGeneration(input: {
+  admin: Admin;
+  generationId: string;
+  scene: EditableDesignScene;
+  brief?: unknown;
+  requestId?: string;
+}) {
+  const { data: generation, error } = await input.admin
+    .from("ai_generations")
+    .update({
+      status: "completed",
+      output_type: "editable_design",
+      scene_graph_json: {
+        scene: input.scene,
+        brief: (input.brief ?? null) as import("@/types/database").Json | null,
+      },
+      design_version: DESIGN_SCENE_VERSION,
+      completed_at: new Date().toISOString(),
+      error_code: null,
+      error_message: null,
+    })
+    .eq("id", input.generationId)
+    .select("*")
+    .single();
+
+  if (error || !generation) {
+    throw new AppError(
+      "GENERATION_CREATE_FAILED",
+      "Unable to save design generation.",
+      500,
+      undefined,
+      input.requestId,
+    );
+  }
+
+  return generation;
 }

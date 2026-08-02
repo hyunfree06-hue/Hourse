@@ -8,8 +8,11 @@ export type CanvasObjectCustomProps = {
   objectRole?: "ai-region" | "generated" | "design" | string;
   generatedBy?: string;
   generationId?: string;
+  sourceType?: "ai-generated" | "ai-design" | "upload" | string;
   locked?: boolean;
   name?: string;
+  designBlockId?: string;
+  semanticRole?: string;
 };
 
 export const FABRIC_CUSTOM_KEYS = [...editorConfig.customObjectProperties];

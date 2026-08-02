@@ -226,18 +226,16 @@ describe("generated image scale (66×66)", () => {
 });
 
 describe("independent clipPath", () => {
-  it("builds a relative Rect from local bounds (not AI-region object)", async () => {
-    const { createGeneratedImageClipPath, isAbsoluteClipPath } = await import(
-      "@/lib/canvas/place-generated-image"
+  it("design insertion path avoids clipPath helpers", async () => {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const panel = await fs.readFile(
+      path.join(process.cwd(), "src/components/editor/ai/ai-panel.tsx"),
+      "utf8",
     );
-    const aiRegionObject = { left: 10, top: 20, width: 66, height: 66 };
-    const clipPath = createGeneratedImageClipPath(100, 100);
-    aiRegionObject.left = NaN;
-    aiRegionObject.width = 0;
-    expect(clipPath.width).toBe(100);
-    expect(clipPath.height).toBe(100);
-    expect(clipPath.left).toBe(0);
-    expect(isAbsoluteClipPath(clipPath)).toBe(false);
+    expect(panel).toContain("insertDesignSceneToCanvas");
+    expect(panel).not.toContain("absolutePositioned: true");
+    expect(panel).not.toContain("createGeneratedImageClipPath");
   });
 });
 
@@ -325,21 +323,16 @@ describe("retry insertion economics", () => {
     expect(source).not.toMatch(/openai|OpenAI|images\.generate/i);
   });
 
-  it("retry UI path never posts a new generation", async () => {
+  it("retry UI path is not used for Design scene generation", async () => {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
     const source = await fs.readFile(
       path.join(process.cwd(), "src/components/editor/ai/ai-panel.tsx"),
       "utf8",
     );
-    const retryFn = source.slice(
-      source.indexOf("async function retryInsertToCanvas"),
-      source.indexOf("async function handleGenerate"),
-    );
-    expect(retryFn).toContain("refreshAssetAccess");
-    expect(retryFn).toContain("placeResult");
-    expect(retryFn).not.toContain('"/api/ai/generations"');
-    expect(retryFn).toContain("insert_only_no_openai_no_credits");
+    expect(source).toContain("placeDesignScene");
+    expect(source).not.toContain("retryInsertToCanvas");
+    expect(source).toContain('mode: "design"');
   });
 
   it("autosave is triggered only after insertion success", async () => {
@@ -349,8 +342,7 @@ describe("retry insertion economics", () => {
       path.join(process.cwd(), "src/components/editor/ai/ai-panel.tsx"),
       "utf8",
     );
-    expect(source).toContain('logInsert("autosave"');
-    expect(source).toContain("FABRIC_IMAGE_NOT_ADDED");
-    expect(source).toContain("trigger_after_insertion_success");
+    expect(source).toContain('window.dispatchEvent(new CustomEvent("hourse:dirty"))');
+    expect(source).toContain("Design added to canvas");
   });
 });

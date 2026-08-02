@@ -6,7 +6,7 @@ import { requireApiUser } from "@/lib/auth/api";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/admin";
 import { createGenerationSchema } from "@/lib/validation/schemas";
-import { getServerEnv } from "@/lib/validation/env.server";
+import { getServerEnv, hasOpenAiKey } from "@/lib/validation/env.server";
 import {
   AppError,
   createRequestId,
@@ -20,9 +20,17 @@ import { consumeCreditsAtomic } from "@/lib/ai/credits";
 import { createFullMask, fitImageToSelection } from "@/lib/ai/image-utils";
 import { resolveOpenAiImageModel } from "@/lib/ai/size";
 import {
+  completeDesignGeneration,
   completeGeneration,
   failAndRefund,
 } from "@/lib/ai/generation-service";
+import {
+  generateEditableDesign,
+  refineEditableDesign,
+  resolveOpenAiDesignModel,
+} from "@/lib/design-scene/design-generation";
+import { fillDesignImagePlaceholders } from "@/lib/design-scene/fill-image-layers";
+import { DESIGN_SCENE_VERSION } from "@/lib/design-scene/schema";
 
 export const runtime = "nodejs";
 
@@ -116,7 +124,18 @@ export async function POST(req: Request) {
     }
 
     const availability = getProviderAvailability();
-    if (!availability[input.provider]) {
+    if (input.mode === "design") {
+      if (!hasOpenAiKey()) {
+        throw new AppError(
+          "PROVIDER_NOT_CONFIGURED",
+          "Design generation is not configured.",
+          503,
+          undefined,
+          requestId,
+        );
+      }
+      resolveOpenAiDesignModel();
+    } else if (!availability[input.provider]) {
       throw new AppError(
         "PROVIDER_NOT_CONFIGURED",
         "This model is not configured.",
@@ -148,7 +167,7 @@ export async function POST(req: Request) {
     });
 
     const cost = calculateCreditCost({
-      provider: input.provider,
+      provider: input.mode === "design" ? "openai" : input.provider,
       quality: input.quality,
       mode: input.mode,
     });
@@ -156,16 +175,18 @@ export async function POST(req: Request) {
 
     const env = getServerEnv();
     const model =
-      input.provider === "openai"
-        ? resolveOpenAiImageModel(env.OPENAI_IMAGE_MODEL)
-        : env.BFL_MODEL;
+      input.mode === "design"
+        ? resolveOpenAiDesignModel()
+        : input.provider === "openai"
+          ? resolveOpenAiImageModel(env.OPENAI_IMAGE_MODEL)
+          : env.BFL_MODEL;
 
     const { data: generation, error: insertError } = await admin
       .from("ai_generations")
       .insert({
         user_id: auth.user.id,
         project_id: input.projectId,
-        provider: input.provider,
+        provider: input.mode === "design" ? "openai" : input.provider,
         model,
         mode: input.mode,
         prompt: input.prompt,
@@ -178,6 +199,8 @@ export async function POST(req: Request) {
         },
         credits_charged: cost,
         idempotency_key: input.idempotencyKey,
+        output_type: input.mode === "design" ? "editable_design" : "raster_image",
+        design_version: input.mode === "design" ? DESIGN_SCENE_VERSION : null,
       })
       .select("*")
       .single();
@@ -232,6 +255,148 @@ export async function POST(req: Request) {
       .from("ai_generations")
       .update({ status: "processing" })
       .eq("id", generation.id);
+
+    if (input.mode === "design") {
+      logServerInfo({
+        requestId,
+        route: "POST /api/ai/generations",
+        stage: "design_generation",
+        userId,
+        generationId,
+      });
+
+      const isRefine =
+        Array.isArray(input.selectedObjectIds) &&
+        input.selectedObjectIds.length > 0 &&
+        Array.isArray(input.selectedObjects) &&
+        input.selectedObjects.length > 0;
+
+      if (isRefine) {
+        const refined = await refineEditableDesign({
+          prompt: input.prompt,
+          width: input.selection.width,
+          height: input.selection.height,
+          quality: input.quality,
+          selectedObjects: input.selectedObjects ?? [],
+          nearbySummary: input.nearbySummary,
+          selectedBounds: {
+            left: input.selection.left,
+            top: input.selection.top,
+            width: input.selection.width,
+            height: input.selection.height,
+          },
+          requestId,
+        });
+
+        const completed = await completeDesignGeneration({
+          admin,
+          generationId: generation.id,
+          scene: {
+            version: 1,
+            title: "Refined design",
+            canvas: {
+              width: Math.round(input.selection.width),
+              height: Math.round(input.selection.height),
+              background: "#ffffff",
+            },
+            palette: {
+              primary: "#111111",
+              secondary: "#666666",
+              accent: "#2563eb",
+              background: "#ffffff",
+              text: "#111111",
+            },
+            objects: [
+              {
+                id: "refine-placeholder",
+                name: "Refine placeholder",
+                type: "rect",
+                left: 0,
+                top: 0,
+                width: Math.max(64, Math.round(input.selection.width)),
+                height: Math.max(64, Math.round(input.selection.height)),
+                angle: 0,
+                opacity: 0,
+                visible: false,
+                locked: true,
+                layerIndex: 0,
+                parentId: null,
+                fill: null,
+                stroke: null,
+                strokeWidth: 0,
+                cornerRadius: 0,
+              },
+            ],
+          },
+          brief: { refine: true, operations: refined.operations },
+          requestId,
+        });
+
+        logServerInfo({
+          requestId,
+          route: "POST /api/ai/generations",
+          stage: "design_refine_complete",
+          userId,
+          generationId,
+        });
+
+        return NextResponse.json({
+          generation: {
+            ...completed,
+            operations: refined.operations,
+            output_type: "editable_design",
+            refine: true,
+          },
+          requestId,
+        });
+      }
+
+      const generated = await generateEditableDesign({
+        prompt: input.prompt,
+        width: input.selection.width,
+        height: input.selection.height,
+        quality: input.quality,
+        requestId,
+      });
+      const brief = generated.brief;
+      const scene = generated.scene;
+
+      const filled = await fillDesignImagePlaceholders({
+        admin,
+        userId: auth.user.id,
+        projectId: input.projectId,
+        generationId: generation.id,
+        scene,
+        quality: input.quality,
+        requestId,
+      });
+
+      const completed = await completeDesignGeneration({
+        admin,
+        generationId: generation.id,
+        scene: filled.scene,
+        brief,
+        requestId,
+      });
+
+      logServerInfo({
+        requestId,
+        route: "POST /api/ai/generations",
+        stage: "design_complete",
+        userId,
+        generationId,
+      });
+
+      return NextResponse.json({
+        generation: {
+          ...completed,
+          scene: filled.scene,
+          imageAssets: filled.imageAssets,
+          output_type: "editable_design",
+        },
+        requestId,
+      });
+    }
 
     const provider = createImageProvider(input.provider);
     let providerResult;
@@ -448,7 +613,7 @@ export async function POST(req: Request) {
           errorMessage:
             error instanceof AppError
               ? error.message
-              : "Generation failed. Your credits were restored.",
+              : "We couldn't create this design. Your credits were restored.",
           requestId,
           shouldRefund: true,
         });
@@ -473,9 +638,7 @@ export async function POST(req: Request) {
           amount: 0,
           errorCode: error instanceof AppError ? error.code : "INTERNAL_ERROR",
           errorMessage:
-            error instanceof AppError
-              ? error.message
-              : "Generation failed.",
+            error instanceof AppError ? error.message : "Generation failed.",
           requestId,
           shouldRefund: false,
         });
