@@ -211,10 +211,17 @@ export async function resolveProviderResultImage(
   fit: "cover" | "contain" = "cover",
 ): Promise<Buffer> {
   if (result.imageBuffer) {
-    // Provider may already have fitted; ensure exact selection bounds.
-    return fitImageToSelection(result.imageBuffer, width, height, fit);
+    const raw = result.imageBuffer as Buffer | Uint8Array;
+    const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
+    return fitImageToSelection(buf, width, height, fit);
   }
   if (result.temporaryUrl) {
+    if (
+      typeof result.temporaryUrl !== "string" ||
+      !/^https:\/\//i.test(result.temporaryUrl)
+    ) {
+      throw new Error("Provider temporaryUrl is not an HTTPS image URL.");
+    }
     const downloaded = await downloadHttpsImage(result.temporaryUrl);
     return fitImageToSelection(downloaded, width, height, fit);
   }

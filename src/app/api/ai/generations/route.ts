@@ -305,8 +305,9 @@ export async function POST(req: Request) {
       const refPath = `${auth.user.id}/${input.projectId}/${randomUUID()}.png`;
       const { error: refUploadError } = await admin.storage
         .from("user-assets")
-        .upload(refPath, normalized, {
+        .upload(refPath, new Uint8Array(normalized), {
           contentType: "image/png",
+          cacheControl: "3600",
           upsert: false,
         });
 
@@ -415,6 +416,7 @@ export async function POST(req: Request) {
         fit: input.fit,
         result: providerResult,
         requestId,
+        provider: input.provider,
       });
       logServerInfo({
         requestId,

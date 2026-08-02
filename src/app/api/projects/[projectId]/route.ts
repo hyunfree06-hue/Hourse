@@ -19,8 +19,12 @@ type Params = { params: Promise<{ projectId: string }> };
 function sameTimestamp(a: string, b: string): boolean {
   const ta = Date.parse(a);
   const tb = Date.parse(b);
-  if (Number.isNaN(ta) || Number.isNaN(tb)) return a === b;
-  return Math.abs(ta - tb) < 1;
+  if (Number.isNaN(ta) || Number.isNaN(tb)) {
+    // Compare truncated ISO prefixes to absorb postgres vs JS formatting.
+    return a.slice(0, 19) === b.slice(0, 19);
+  }
+  // Allow small drift from timestamptz microsecond vs JS millisecond formatting.
+  return Math.abs(ta - tb) < 5;
 }
 
 export async function GET(_req: Request, { params }: Params) {

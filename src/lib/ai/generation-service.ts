@@ -3,12 +3,16 @@ import { createServiceClient } from "@/lib/supabase/admin";
 import {
   AppError,
   logServerError,
+  logServerInfo,
   supabaseErrorFields,
 } from "@/lib/utils/errors";
 import { refundCreditsAtomic } from "@/lib/ai/credits";
-import { validateImageBuffer } from "@/lib/ai/image-utils";
 import type { ImageFitMode } from "@/lib/ai/image-utils";
 import { resolveProviderResultImage } from "@/lib/ai/bfl-provider";
+import {
+  assertNotRawBase64OrJsonText,
+  validateGeneratedImageBytes,
+} from "@/lib/ai/decode-generated-image";
 import type { GenerationProviderResult, GenerationProviderStatus } from "@/lib/ai/types";
 
 type Admin = ReturnType<typeof createServiceClient>;
@@ -45,6 +49,10 @@ export async function failAndRefund(input: {
   });
 }
 
+/**
+ * Decode → validate → upload Uint8Array → verify stored object → assets row → complete.
+ * Never marks completed before stored bytes decode as a real image.
+ */
 export async function completeGeneration(input: {
   admin: Admin;
   generationId: string;
@@ -55,33 +63,52 @@ export async function completeGeneration(input: {
   fit?: ImageFitMode;
   result: GenerationProviderResult | GenerationProviderStatus;
   requestId?: string;
+  provider?: string;
 }) {
-  const buffer = await resolveProviderResultImage(
-    input.result,
-    input.width,
-    input.height,
-    input.fit ?? "cover",
-  );
-  const meta = await validateImageBuffer(buffer);
-  const mimeType =
-    meta.mimeType === "image/jpeg" || meta.mimeType === "image/webp"
-      ? meta.mimeType
-      : "image/png";
-  const extension =
-    mimeType === "image/jpeg" ? "jpg" : mimeType === "image/webp" ? "webp" : "png";
-  const path = `${input.userId}/${input.projectId}/${randomUUID()}.${extension}`;
+  const requestId = input.requestId ?? "unknown";
 
+  let raw: Buffer;
+  try {
+    raw = await resolveProviderResultImage(
+      input.result,
+      input.width,
+      input.height,
+      input.fit ?? "cover",
+    );
+  } catch (error) {
+    throw new AppError(
+      "INVALID_GENERATED_IMAGE_BYTES",
+      error instanceof Error
+        ? error.message
+        : "Generated image bytes could not be resolved.",
+      502,
+      undefined,
+      requestId,
+    );
+  }
+
+  assertNotRawBase64OrJsonText(raw);
+
+  const validated = await validateGeneratedImageBytes(raw, {
+    generationId: input.generationId,
+    provider: input.provider,
+    requestId,
+  });
+
+  const path = `${input.userId}/${input.projectId}/${randomUUID()}.${validated.extension}`;
+
+  // Critical: upload Uint8Array, never a Node Buffer that may JSON-serialize.
   const { error: uploadError } = await input.admin.storage
     .from("generated-assets")
-    .upload(path, buffer, {
-      contentType: mimeType,
+    .upload(path, validated.uploadBody, {
+      contentType: validated.mime,
       cacheControl: "3600",
       upsert: false,
     });
 
   if (uploadError) {
     logServerError({
-      requestId: input.requestId ?? "unknown",
+      requestId,
       route: "completeGeneration",
       stage: "storage_upload",
       projectId: input.projectId,
@@ -94,9 +121,84 @@ export async function completeGeneration(input: {
       "The image was generated, but we couldn't add it to your project.",
       500,
       undefined,
-      input.requestId,
+      requestId,
     );
   }
+
+  // Prove the stored object is decodable before completing the generation.
+  const { data: stored, error: downloadError } = await input.admin.storage
+    .from("generated-assets")
+    .download(path);
+
+  if (downloadError || !stored) {
+    await input.admin.storage.from("generated-assets").remove([path]);
+    logServerError({
+      requestId,
+      route: "completeGeneration",
+      stage: "storage_verify_download",
+      projectId: input.projectId,
+      userId: input.userId,
+      generationId: input.generationId,
+      supabase: supabaseErrorFields(downloadError),
+    });
+    throw new AppError(
+      "STORAGE_UPLOAD_FAILED",
+      "The image was generated, but we couldn't verify storage.",
+      500,
+      undefined,
+      requestId,
+    );
+  }
+
+  const storedBytes = Buffer.from(await stored.arrayBuffer());
+  let verified;
+  try {
+    verified = await validateGeneratedImageBytes(storedBytes, {
+      generationId: input.generationId,
+      provider: input.provider,
+      requestId,
+    });
+  } catch (error) {
+    await input.admin.storage.from("generated-assets").remove([path]);
+    logServerError({
+      requestId,
+      route: "completeGeneration",
+      stage: "storage_verify_invalid",
+      projectId: input.projectId,
+      userId: input.userId,
+      generationId: input.generationId,
+      message:
+        error instanceof Error ? error.message : "stored object invalid",
+    });
+    throw new AppError(
+      "INVALID_GENERATED_IMAGE_BYTES",
+      "Stored generated image is not valid image bytes.",
+      502,
+      undefined,
+      requestId,
+    );
+  }
+
+  if (verified.mime !== validated.mime) {
+    await input.admin.storage.from("generated-assets").remove([path]);
+    throw new AppError(
+      "INVALID_GENERATED_IMAGE_BYTES",
+      "Stored generated image MIME mismatch.",
+      502,
+      undefined,
+      requestId,
+    );
+  }
+
+  logServerInfo({
+    requestId,
+    route: "completeGeneration",
+    stage: "storage_verified",
+    generationId: input.generationId,
+    userId: input.userId,
+    projectId: input.projectId,
+    message: `pathExt=${validated.extension};mime=${validated.mime};bytes=${verified.byteLength};format=${verified.format}`,
+  });
 
   const { data: asset, error: assetError } = await input.admin
     .from("assets")
@@ -106,8 +208,8 @@ export async function completeGeneration(input: {
       asset_type: "generated",
       storage_bucket: "generated-assets",
       storage_path: path,
-      mime_type: mimeType,
-      file_size: buffer.length,
+      mime_type: validated.mime,
+      file_size: verified.byteLength,
       width: Math.round(input.width),
       height: Math.round(input.height),
     })
@@ -115,8 +217,9 @@ export async function completeGeneration(input: {
     .single();
 
   if (assetError || !asset) {
+    await input.admin.storage.from("generated-assets").remove([path]);
     logServerError({
-      requestId: input.requestId ?? "unknown",
+      requestId,
       route: "completeGeneration",
       stage: "asset_insert",
       projectId: input.projectId,
@@ -129,7 +232,7 @@ export async function completeGeneration(input: {
       "The image was generated, but we couldn't add it to your project.",
       500,
       undefined,
-      input.requestId,
+      requestId,
     );
   }
 

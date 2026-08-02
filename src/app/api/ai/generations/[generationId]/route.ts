@@ -118,6 +118,7 @@ export async function GET(_req: Request, { params }: Params) {
         width: selection?.width ?? 1024,
         height: selection?.height ?? 1024,
         result: status,
+        provider: generation.provider ?? undefined,
       });
       return NextResponse.json({ generation: completed });
     }

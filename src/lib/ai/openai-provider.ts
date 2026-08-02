@@ -8,12 +8,13 @@ import type {
   ImageGenerationProvider,
 } from "./types";
 import { fitImageToSelection } from "./image-utils";
+import { decodeOpenAiB64Json } from "./decode-generated-image";
 import {
   isGptImageModel,
   normalizeOpenAiImageSize,
   resolveOpenAiImageModel,
 } from "./size";
-import { logServerError } from "@/lib/utils/errors";
+import { logServerError, logServerInfo } from "@/lib/utils/errors";
 
 function mapQuality(
   quality: GenerateImageInput["quality"],
@@ -21,6 +22,33 @@ function mapQuality(
   if (quality === "fast") return "low";
   if (quality === "high") return "high";
   return "medium";
+}
+
+function extractImageFromResponse(
+  response: OpenAI.Images.ImagesResponse,
+): { buffer?: Buffer; temporaryUrl?: string; providerRequestId?: string } {
+  const first = response.data?.[0];
+  const providerRequestId =
+    (response as { _request_id?: string })._request_id ?? undefined;
+  if (!first) {
+    return { providerRequestId };
+  }
+
+  if (first.b64_json) {
+    return {
+      buffer: decodeOpenAiB64Json(first.b64_json),
+      providerRequestId,
+    };
+  }
+
+  if (first.url) {
+    return {
+      temporaryUrl: first.url,
+      providerRequestId,
+    };
+  }
+
+  return { providerRequestId };
 }
 
 export class OpenAIImageProvider implements ImageGenerationProvider {
@@ -49,45 +77,45 @@ export class OpenAIImageProvider implements ImageGenerationProvider {
         size: normalized.size,
         quality: mapQuality(input.quality),
         n: 1,
-        ...(isGptImageModel(model) ? { output_format: "png" as const } : {}),
+        // GPT image models always return b64_json (response_format unsupported).
+        // DALL·E defaults to URL — force b64_json so we never upload a URL string.
+        ...(isGptImageModel(model)
+          ? { output_format: "png" as const }
+          : { response_format: "b64_json" as const }),
       });
 
-      const first = response.data?.[0];
-      if (!first) {
-        return {
-          status: "failed",
-          errorCode: "PROVIDER_REQUEST_FAILED",
-          errorMessage: "The image model couldn't complete this request.",
-        };
-      }
-
-      if (first.b64_json) {
-        const buffer = Buffer.from(first.b64_json, "base64");
+      const extracted = extractImageFromResponse(response);
+      if (extracted.buffer) {
+        logServerInfo({
+          requestId: extracted.providerRequestId ?? "openai-generate",
+          route: "openai-images",
+          stage: "b64_decoded",
+          message: `bytes=${extracted.buffer.length};field=b64_json`,
+        });
         return {
           status: "completed",
           imageBuffer: await fitImageToSelection(
-            buffer,
+            extracted.buffer,
             input.width,
             input.height,
             fit,
           ),
           mimeType: "image/png",
-          providerRequestId: response._request_id ?? undefined,
+          providerRequestId: extracted.providerRequestId,
         };
       }
 
-      if (first.url) {
+      if (extracted.temporaryUrl) {
         return {
           status: "completed",
-          temporaryUrl: first.url,
-          providerRequestId: response._request_id ?? undefined,
-          // Downstream resolver fits to selection
+          temporaryUrl: extracted.temporaryUrl,
+          providerRequestId: extracted.providerRequestId,
         };
       }
 
       return {
         status: "failed",
-        errorCode: "PROVIDER_REQUEST_FAILED",
+        errorCode: "OPENAI_IMAGE_DATA_MISSING",
         errorMessage: "The image model couldn't complete this request.",
       };
     } catch (error) {
@@ -101,7 +129,6 @@ export class OpenAIImageProvider implements ImageGenerationProvider {
     const fit = input.fit ?? "cover";
 
     try {
-      // Edit APIs expect the input image near the target generation size.
       const imageForEdit = await fitImageToSelection(
         input.imagePng,
         normalized.width,
@@ -123,7 +150,7 @@ export class OpenAIImageProvider implements ImageGenerationProvider {
               quality: mapQuality(input.quality),
               output_format: "png" as const,
             }
-          : {}),
+          : { response_format: "b64_json" as const }),
       };
 
       if (input.maskPng) {
@@ -139,40 +166,39 @@ export class OpenAIImageProvider implements ImageGenerationProvider {
       }
 
       const response = await this.client.images.edit(params);
-      const first = response.data?.[0];
-      if (!first) {
-        return {
-          status: "failed",
-          errorCode: "PROVIDER_REQUEST_FAILED",
-          errorMessage: "The image model couldn't complete this request.",
-        };
-      }
+      const extracted = extractImageFromResponse(response);
 
-      if (first.b64_json) {
+      if (extracted.buffer) {
+        logServerInfo({
+          requestId: extracted.providerRequestId ?? "openai-edit",
+          route: "openai-images",
+          stage: "b64_decoded",
+          message: `bytes=${extracted.buffer.length};field=b64_json`,
+        });
         return {
           status: "completed",
           imageBuffer: await fitImageToSelection(
-            Buffer.from(first.b64_json, "base64"),
+            extracted.buffer,
             input.width,
             input.height,
             fit,
           ),
           mimeType: "image/png",
-          providerRequestId: response._request_id ?? undefined,
+          providerRequestId: extracted.providerRequestId,
         };
       }
 
-      if (first.url) {
+      if (extracted.temporaryUrl) {
         return {
           status: "completed",
-          temporaryUrl: first.url,
-          providerRequestId: response._request_id ?? undefined,
+          temporaryUrl: extracted.temporaryUrl,
+          providerRequestId: extracted.providerRequestId,
         };
       }
 
       return {
         status: "failed",
-        errorCode: "PROVIDER_REQUEST_FAILED",
+        errorCode: "OPENAI_IMAGE_DATA_MISSING",
         errorMessage: "The image model couldn't complete this request.",
       };
     } catch (error) {

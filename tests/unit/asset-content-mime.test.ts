@@ -127,10 +127,11 @@ describe("asset content route contracts", () => {
       path.join(process.cwd(), "src/lib/ai/generation-service.ts"),
       "utf8",
     );
-    expect(source).toContain("contentType: mimeType");
+    expect(source).toContain("contentType: validated.mime");
     expect(source).toContain('cacheControl: "3600"');
-    expect(source).toContain("mime_type: mimeType");
-    expect(source).toContain(".${extension}");
+    expect(source).toContain("mime_type: validated.mime");
+    expect(source).toContain("validated.uploadBody");
+    expect(source).toContain(".${validated.extension}");
     expect(source).not.toMatch(/mime_type:\s*["']application\/octet-stream["']/);
   });
 
