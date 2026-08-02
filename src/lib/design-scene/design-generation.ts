@@ -4,20 +4,27 @@ import { AppError, logServerError, logServerInfo } from "@/lib/utils/errors";
 import {
   createDesignBriefResponseFormat,
   createDesignOperationsResponseFormat,
-  createDesignResponseFormats,
-  createDesignSceneResponseFormat,
   DesignBriefSchema,
   designOperationsSchema,
   editableDesignObjectSchema,
   normalizeDesignBrief,
   summarizeUnknownValue,
   summarizeZodIssue,
+  MIN_FONT_SIZE,
   type DesignBrief,
   type DesignOperation,
   type EditableDesignScene,
 } from "@/lib/design-scene/schema";
-import { validateDesignScene, DesignSceneValidationError } from "@/lib/design-scene/validate-scene";
+import {
+  createDesignResponseFormats,
+  createDesignSceneResponseFormat,
+} from "@/lib/design-scene/design-response-formats";
+import { validateDesignScene, DesignSceneValidationError, safeParseDesignScene, summarizeFirstSceneZodIssue } from "@/lib/design-scene/validate-scene";
 import { normalizeDesignSceneWithDiagnostics } from "@/lib/design-scene/normalize-diagnostics";
+import {
+  preNormalizeSceneRaw,
+  sceneIssuesAreOnlyRecoverableNumeric,
+} from "@/lib/design-scene/pre-normalize-scene";
 import { designFonts } from "@/lib/design-scene/font-registry";
 import {
   DesignGenerationError,
@@ -411,15 +418,19 @@ async function generateBrief(
   }
 }
 
-async function generateSceneFromBrief(
+async function generateSceneOnce(
   client: OpenAI,
   model: string,
   input: DesignGenerationInput,
   brief: DesignBrief,
   sceneFormat: ReturnType<typeof createDesignSceneResponseFormat>,
   ctx: DesignLogCtx,
+  retry: boolean,
 ): Promise<EditableDesignScene> {
-  designLog("provider_request_start", ctx, { pass: "scene" });
+  designLog("provider_request_start", ctx, {
+    pass: "scene",
+    sceneRetry: retry,
+  });
   let response: OpenAI.Responses.Response;
   try {
     response = await client.responses.create({
@@ -430,10 +441,15 @@ async function generateSceneFromBrief(
           content: [
             "You create editable design compositions as strict JSON scene graphs.",
             "Never return a single flattened image as the whole design.",
-            "Text must remain editable text objects. Logo symbols should be vector shapes/paths/groups, separate from wordmarks.",
+            "Text must remain editable text objects.",
+            "For logos: include one refined vector symbol (path/group) and one editable wordmark as separate layers. Optional supporting text only when requested. Balanced alignment, optical spacing, no placeholder geometry, no decorative random shapes.",
+            "Prefer professional spacing, strong typography hierarchy, refined vector symbols, and separate semantic layers.",
             "Use only these fonts:",
             designFonts.join(", "),
             "Prefer Noto Sans KR for Korean text. Prefer Inter/Geist/IBM Plex Sans/Space Grotesk for Latin sans.",
+            `All text fontSize values must be >= ${MIN_FONT_SIZE}.`,
+            "All object width/height values must be positive finite numbers.",
+            "strokeWidth may be 0; do not force strokeWidth to 8.",
             "Coordinates are local to the frame starting at 0,0.",
             "Only include image objects when photography/texture/product realism is truly required.",
             "Every object must include semanticRole (string or null) and parentId (string or null).",
@@ -447,7 +463,18 @@ async function generateSceneFromBrief(
             `Frame: ${Math.round(input.width)}x${Math.round(input.height)}`,
             `Design brief: ${JSON.stringify(brief)}`,
             "Return only the editable design scene graph.",
-          ].join("\n"),
+            retry
+              ? [
+                  "RETRY: Regenerate the same editable scene.",
+                  `All text font sizes must be at least ${MIN_FONT_SIZE}.`,
+                  "All object dimensions must be positive.",
+                  "All numeric values must satisfy the supplied JSON Schema.",
+                  "Preserve the original visual direction, typography hierarchy, symbol + wordmark separation, and professional spacing.",
+                ].join(" ")
+              : "",
+          ]
+            .filter(Boolean)
+            .join("\n"),
         },
       ],
       text: { format: sceneFormat },
@@ -468,29 +495,87 @@ async function generateSceneFromBrief(
     (raw as { version: number }).version = 1;
   }
 
-  designLog("scene_schema_validation", ctx);
-  let validated: EditableDesignScene;
-  try {
-    validated = validateDesignScene(raw);
-  } catch (error) {
+  designLog("scene_schema_validation", ctx, { sceneRetry: retry });
+
+  const rawParsed = safeParseDesignScene(raw);
+  if (!rawParsed.success && rawParsed.error.issues[0]) {
     designFailLog("scene_schema_validation", ctx, "DESIGN_SCENE_INVALID", {
-      internalReason:
-        error instanceof DesignSceneValidationError
-          ? error.message.slice(0, 120)
-          : "SCHEMA_VALIDATION_FAILED",
+      sceneRetry: retry,
+      phase: "raw_provider_output",
+      firstIssue: summarizeFirstSceneZodIssue(rawParsed.error.issues[0], raw),
+      recoverableOnly: sceneIssuesAreOnlyRecoverableNumeric(
+        rawParsed.error.issues,
+      ),
+    });
+  }
+
+  const { value: normalizedRaw, repairs } = preNormalizeSceneRaw(raw);
+  if (repairs.length > 0) {
+    designLog("scene_normalization", ctx, {
+      phase: "pre_validate_numeric_repair",
+      sceneRetry: retry,
+      repairs: repairs.slice(0, 12).map((r) => ({
+        fieldPath: r.fieldPath,
+        originalValue: r.originalValue,
+        normalizedValue: r.normalizedValue,
+      })),
+    });
+  }
+
+  const repairedParsed = safeParseDesignScene(normalizedRaw);
+  if (!repairedParsed.success) {
+    const first = repairedParsed.error.issues[0];
+    const recoverable = sceneIssuesAreOnlyRecoverableNumeric(
+      repairedParsed.error.issues,
+    );
+    const firstIssue = first
+      ? summarizeFirstSceneZodIssue(first, normalizedRaw)
+      : null;
+    designFailLog("scene_schema_validation", ctx, "DESIGN_SCENE_INVALID", {
+      sceneRetry: retry,
+      phase: "after_numeric_repair",
+      firstIssue,
+      recoverableOnly: recoverable,
+      internalReason: first?.message?.slice(0, 120) ?? "SCHEMA_VALIDATION_FAILED",
     });
     throw new DesignGenerationError("DESIGN_SCENE_INVALID", {
       stage: "scene_schema_validation",
       requestId: ctx.requestId,
+      internalReason: recoverable
+        ? "SCENE_RECOVERABLE_NUMERIC_VALIDATION_FAILED"
+        : "SCENE_SCHEMA_VALIDATION_FAILED",
+      details: {
+        firstIssue,
+        recoverableOnly: recoverable,
+        sceneRetry: retry,
+      },
+    });
+  }
+
+  let validated: EditableDesignScene;
+  try {
+    validated = validateDesignScene(normalizedRaw);
+  } catch (error) {
+    designFailLog("scene_schema_validation", ctx, "DESIGN_SCENE_INVALID", {
+      sceneRetry: retry,
+      phase: "post_schema_integrity",
       internalReason:
         error instanceof DesignSceneValidationError
-          ? "SCENE_SCHEMA_VALIDATION_FAILED"
-          : "SCENE_VALIDATION_FAILED",
+          ? error.message.slice(0, 120)
+          : "SCHEMA_VALIDATION_FAILED",
+      recoverableOnly: false,
+    });
+    throw new DesignGenerationError("DESIGN_SCENE_INVALID", {
+      stage: "scene_schema_validation",
+      requestId: ctx.requestId,
+      internalReason: "SCENE_SCHEMA_VALIDATION_FAILED",
+      details: { recoverableOnly: false, sceneRetry: retry },
     });
   }
 
   designLog("scene_normalization", ctx, {
     inputObjectCount: validated.objects.length,
+    sceneRetry: retry,
   });
   const diagnostics = normalizeDesignSceneWithDiagnostics(validated, {
     requestId: ctx.requestId,
@@ -501,6 +586,7 @@ async function generateSceneFromBrief(
     validObjectCount: diagnostics.validObjectCount,
     rejectedObjectCount: diagnostics.rejectedObjectCount,
     rejectionReasons: diagnostics.rejections.map((r) => r.reason).slice(0, 12),
+    sceneRetry: retry,
   });
 
   if (diagnostics.validObjectCount === 0) {
@@ -512,6 +598,56 @@ async function generateSceneFromBrief(
   }
 
   return diagnostics.scene;
+}
+
+async function generateSceneFromBrief(
+  client: OpenAI,
+  model: string,
+  input: DesignGenerationInput,
+  brief: DesignBrief,
+  sceneFormat: ReturnType<typeof createDesignSceneResponseFormat>,
+  ctx: DesignLogCtx,
+): Promise<EditableDesignScene> {
+  try {
+    return await generateSceneOnce(
+      client,
+      model,
+      input,
+      brief,
+      sceneFormat,
+      ctx,
+      false,
+    );
+  } catch (error) {
+    const details =
+      error instanceof DesignGenerationError
+        ? (error.details as { recoverableOnly?: boolean } | undefined)
+        : undefined;
+    if (
+      error instanceof DesignGenerationError &&
+      error.code === "DESIGN_SCENE_INVALID" &&
+      (details?.recoverableOnly === true ||
+        error.internalReason ===
+          "SCENE_RECOVERABLE_NUMERIC_VALIDATION_FAILED")
+    ) {
+      designLog("scene_schema_validation", ctx, {
+        sceneRetry: true,
+        message:
+          "retrying scene once after recoverable numeric validation failure (zero credits)",
+        generationId: ctx.generationId,
+      });
+      return generateSceneOnce(
+        client,
+        model,
+        input,
+        brief,
+        sceneFormat,
+        ctx,
+        true,
+      );
+    }
+    throw error;
+  }
 }
 
 function assertNormalGenerationCreates(

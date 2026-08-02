@@ -1,5 +1,9 @@
 import { preferFontForText } from "@/lib/design-scene/font-registry";
-import type { EditableDesignObject, EditableDesignScene } from "@/lib/design-scene/schema";
+import {
+  MIN_FONT_SIZE,
+  type EditableDesignObject,
+  type EditableDesignScene,
+} from "@/lib/design-scene/schema";
 
 const SPACING = [4, 8, 12, 16, 24, 32, 48, 64] as const;
 
@@ -48,7 +52,8 @@ function normalizeObject(obj: EditableDesignObject, canvas: EditableDesignScene[
 
   if (next.type === "text") {
     const fontFamily = preferFontForText(next.text, next.fontFamily);
-    const fontSize = Math.max(10, Math.min(next.fontSize, Math.max(canvas.height * 0.4, 48)));
+    const fontSize =
+      Math.max(MIN_FONT_SIZE, Math.min(next.fontSize, Math.max(canvas.height * 0.4, 48)));
     const text = next.uppercase ? next.text.toUpperCase() : next.text;
     const fontWeight =
       next.fontWeight === "bold" ? 700 : next.fontWeight === "normal" ? 400 : next.fontWeight;

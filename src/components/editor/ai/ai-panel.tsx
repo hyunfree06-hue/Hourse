@@ -180,7 +180,9 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingApply, setPendingApply] = useState<PendingApply | null>(null);
-  const [lastGenerationId, setLastGenerationId] = useState<string | null>(null);
+  const [lastCompletedGenerationId, setLastCompletedGenerationId] = useState<
+    string | null
+  >(null);
   const [selectionEpoch, setSelectionEpoch] = useState(0);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -298,7 +300,7 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
 
     api.revealObjects?.(fabricObjects);
     api.syncZoom?.();
-    setLastGenerationId(generationId);
+    setLastCompletedGenerationId(generationId);
 
     api.history?.save();
     api.canvas.requestRenderAll();
@@ -334,7 +336,7 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
           api.revealObjects?.(created);
           api.syncZoom?.();
         }
-        setLastGenerationId(pending.generationId);
+        setLastCompletedGenerationId(pending.generationId);
         return;
       }
 
@@ -812,19 +814,19 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
           </div>
         )}
 
-        {lastGenerationId && !pendingApply ? (
+        {lastCompletedGenerationId && !pendingApply ? (
           <Button
             size="sm"
             variant="outline"
             className="h-8 w-full text-[11px]"
             onClick={() => {
               const api = getHourseApi();
-              if (!api || !lastGenerationId) return;
-              api.fitGeneration?.(lastGenerationId);
+              if (!api || !lastCompletedGenerationId) return;
+              api.fitGeneration?.(lastCompletedGenerationId);
               api.syncZoom?.();
             }}
           >
-            Show generated design
+            Show last completed design
           </Button>
         ) : null}
 

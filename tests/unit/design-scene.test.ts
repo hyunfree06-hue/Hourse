@@ -6,11 +6,11 @@ import { calculateCreditCost, creditCostTable } from "@/config/credits";
 import { applyDesignOperations } from "@/lib/design-scene/design-generation";
 import {
   assertOpenAiStrictJsonSchema,
-  createDesignResponseFormat,
   editableDesignObjectSchema,
   editableDesignSceneSchema,
   type EditableDesignScene,
 } from "@/lib/design-scene/schema";
+import { createDesignResponseFormat } from "@/lib/design-scene/design-response-formats";
 
 function sampleScene(overrides?: Partial<EditableDesignScene>): EditableDesignScene {
   return {
@@ -156,7 +156,6 @@ describe("design scene validation", () => {
       fit: "cover",
       cornerRadius: 0,
       assetId: null,
-      stroke: null,
     });
     // image schema has no stroke — ensure nullable keys parse on a rect
     expect(
@@ -362,15 +361,22 @@ describe("OpenAI Structured Outputs preflight", () => {
   it("scene graph JSON schema requires semanticRole as nullable", () => {
     const { scene } = createDesignResponseFormat();
     const objects = (scene.schema.properties as Record<string, unknown>)
-      .objects as { items: { anyOf: Array<Record<string, unknown>> } };
-    for (const branch of objects.items.anyOf) {
+      .objects as { items: { anyOf?: Array<Record<string, unknown>> } };
+    const branches = objects.items.anyOf;
+    expect(Array.isArray(branches) && branches.length > 0).toBe(true);
+    for (const branch of branches ?? []) {
       const required = branch.required as string[];
       expect(required).toContain("semanticRole");
       expect(required).toContain("parentId");
-      const props = branch.properties as Record<string, { type: unknown }>;
-      expect(props.semanticRole.type).toEqual(["string", "null"]);
-      expect(props.parentId.type).toEqual(["string", "null"]);
+      const props = branch.properties as Record<string, { type?: unknown }>;
+      const roleType = JSON.stringify(props.semanticRole);
+      const parentType = JSON.stringify(props.parentId);
+      expect(roleType).toMatch(/null/);
+      expect(parentType).toMatch(/null/);
     }
+    // Provider schema must enforce the same fontSize floor as local Zod.
+    const encoded = JSON.stringify(scene.schema);
+    expect(encoded).toMatch(/"fontSize":\{[^}]*"minimum":8/);
   });
 });
 

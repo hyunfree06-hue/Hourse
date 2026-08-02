@@ -10,6 +10,12 @@ export const MAX_PATH_LENGTH = 8_000;
 export const MAX_CANVAS_EDGE = 4_096;
 export const MAX_IMAGE_PLACEHOLDERS = 4;
 export const MIN_CANVAS_EDGE = 64;
+/** Minimum readable editable text size (px). Semantically correct for typography. */
+export const MIN_FONT_SIZE = 8;
+export const MAX_FONT_SIZE = 400;
+/** Smallest positive visible geometry after repair (not a font-size floor). */
+export const MIN_VISIBLE_SIZE = 1;
+export const MAX_STROKE_WIDTH = 64;
 
 /**
  * OpenAI Structured Outputs (strict) requires:
@@ -21,6 +27,7 @@ export const MIN_CANVAS_EDGE = 64;
 const finiteNumber = z.number().finite();
 const positiveSize = finiteNumber.positive().max(MAX_CANVAS_EDGE);
 const nonNeg = finiteNumber.min(0).max(MAX_CANVAS_EDGE);
+const strokeWidthSchema = finiteNumber.min(0).max(MAX_STROKE_WIDTH);
 const opacitySchema = finiteNumber.min(0).max(1);
 const angleSchema = finiteNumber.min(-360).max(360);
 const colorSchema = z
@@ -50,93 +57,109 @@ const baseFields = {
   semanticRole: z.union([z.string().min(1).max(64), z.null()]),
 } as const;
 
-export const editableTextObjectSchema = z.object({
-  ...baseFields,
-  type: z.literal("text"),
-  text: z.string().min(1).max(MAX_TEXT_LENGTH),
-  fontFamily: z.string().min(1).max(64),
-  fontSize: finiteNumber.min(8).max(400),
-  fontWeight: z.union([
-    z.number().int().min(100).max(900),
-    z.enum(["normal", "bold"]),
-  ]),
-  fontStyle: z.enum(["normal", "italic"]),
-  lineHeight: finiteNumber.min(0.8).max(3),
-  letterSpacing: finiteNumber.min(-50).max(200),
-  textAlign: z.enum(["left", "center", "right"]),
-  fill: colorSchema,
-  stroke: nullableColor,
-  strokeWidth: nonNeg.max(40),
-  underline: z.boolean(),
-  uppercase: z.boolean(),
-});
+export const editableTextObjectSchema = z
+  .object({
+    ...baseFields,
+    type: z.literal("text"),
+    text: z.string().min(1).max(MAX_TEXT_LENGTH),
+    fontFamily: z.string().min(1).max(64),
+    fontSize: finiteNumber.min(MIN_FONT_SIZE).max(MAX_FONT_SIZE),
+    fontWeight: z.union([
+      z.number().int().min(100).max(900),
+      z.enum(["normal", "bold"]),
+    ]),
+    fontStyle: z.enum(["normal", "italic"]),
+    lineHeight: finiteNumber.min(0.8).max(3),
+    letterSpacing: finiteNumber.min(-50).max(200),
+    textAlign: z.enum(["left", "center", "right"]),
+    fill: colorSchema,
+    stroke: nullableColor,
+    strokeWidth: strokeWidthSchema,
+    underline: z.boolean(),
+    uppercase: z.boolean(),
+  })
+  .strict();
 
-export const editableRectObjectSchema = z.object({
-  ...baseFields,
-  type: z.literal("rect"),
-  fill: nullableColor,
-  stroke: nullableColor,
-  strokeWidth: nonNeg.max(40),
-  cornerRadius: nonNeg.max(500),
-});
+export const editableRectObjectSchema = z
+  .object({
+    ...baseFields,
+    type: z.literal("rect"),
+    fill: nullableColor,
+    stroke: nullableColor,
+    strokeWidth: strokeWidthSchema,
+    cornerRadius: nonNeg.max(500),
+  })
+  .strict();
 
-export const editableEllipseObjectSchema = z.object({
-  ...baseFields,
-  type: z.literal("ellipse"),
-  fill: nullableColor,
-  stroke: nullableColor,
-  strokeWidth: nonNeg.max(40),
-});
+export const editableEllipseObjectSchema = z
+  .object({
+    ...baseFields,
+    type: z.literal("ellipse"),
+    fill: nullableColor,
+    stroke: nullableColor,
+    strokeWidth: strokeWidthSchema,
+  })
+  .strict();
 
-export const editableLineObjectSchema = z.object({
-  ...baseFields,
-  type: z.literal("line"),
-  x1: finiteNumber,
-  y1: finiteNumber,
-  x2: finiteNumber,
-  y2: finiteNumber,
-  stroke: colorSchema,
-  strokeWidth: positiveSize.max(40),
-  strokeLineCap: z.enum(["butt", "round", "square"]),
-});
+export const editableLineObjectSchema = z
+  .object({
+    ...baseFields,
+    type: z.literal("line"),
+    x1: finiteNumber,
+    y1: finiteNumber,
+    x2: finiteNumber,
+    y2: finiteNumber,
+    stroke: colorSchema,
+    strokeWidth: finiteNumber.positive().max(MAX_STROKE_WIDTH),
+    strokeLineCap: z.enum(["butt", "round", "square"]),
+  })
+  .strict();
 
-export const editablePathObjectSchema = z.object({
-  ...baseFields,
-  type: z.literal("path"),
-  pathData: z.string().min(1).max(MAX_PATH_LENGTH),
-  fill: nullableColor,
-  stroke: nullableColor,
-  strokeWidth: nonNeg.max(40),
-  strokeLineCap: z.enum(["butt", "round", "square"]),
-  strokeLineJoin: z.enum(["miter", "round", "bevel"]),
-});
+export const editablePathObjectSchema = z
+  .object({
+    ...baseFields,
+    type: z.literal("path"),
+    pathData: z.string().min(1).max(MAX_PATH_LENGTH),
+    fill: nullableColor,
+    stroke: nullableColor,
+    strokeWidth: strokeWidthSchema,
+    strokeLineCap: z.enum(["butt", "round", "square"]),
+    strokeLineJoin: z.enum(["miter", "round", "bevel"]),
+  })
+  .strict();
 
-export const editablePolygonObjectSchema = z.object({
-  ...baseFields,
-  type: z.literal("polygon"),
-  points: z
-    .array(z.object({ x: finiteNumber, y: finiteNumber }))
-    .min(3)
-    .max(64),
-  fill: nullableColor,
-  stroke: nullableColor,
-  strokeWidth: nonNeg.max(40),
-});
+export const editablePolygonObjectSchema = z
+  .object({
+    ...baseFields,
+    type: z.literal("polygon"),
+    points: z
+      .array(z.object({ x: finiteNumber, y: finiteNumber }).strict())
+      .min(3)
+      .max(64),
+    fill: nullableColor,
+    stroke: nullableColor,
+    strokeWidth: strokeWidthSchema,
+  })
+  .strict();
 
-export const editableImageObjectSchema = z.object({
-  ...baseFields,
-  type: z.literal("image"),
-  prompt: z.string().min(1).max(500),
-  fit: z.enum(["cover", "contain"]),
-  cornerRadius: nonNeg.max(500),
-  assetId: z.union([z.string().uuid(), z.null()]),
-});
+export const editableImageObjectSchema = z
+  .object({
+    ...baseFields,
+    type: z.literal("image"),
+    prompt: z.string().min(1).max(500),
+    fit: z.enum(["cover", "contain"]),
+    cornerRadius: nonNeg.max(500),
+    assetId: z.union([z.string().uuid(), z.null()]),
+  })
+  .strict();
 
-export const editableGroupDefinitionSchema = z.object({
-  ...baseFields,
-  type: z.literal("group"),
-  childIds: z.array(idSchema).min(1).max(32),
-});
+export const editableGroupDefinitionSchema = z
+  .object({
+    ...baseFields,
+    type: z.literal("group"),
+    childIds: z.array(idSchema).min(1).max(32),
+  })
+  .strict();
 
 export const editableDesignObjectSchema = z.discriminatedUnion("type", [
   editableTextObjectSchema,
@@ -149,25 +172,37 @@ export const editableDesignObjectSchema = z.discriminatedUnion("type", [
   editableGroupDefinitionSchema,
 ]);
 
-export const editableDesignSceneSchema = z.object({
-  version: z.literal(DESIGN_SCENE_VERSION),
-  title: z.string().min(1).max(120),
-  canvas: z.object({
-    width: positiveSize,
-    height: positiveSize,
-    background: colorSchema,
-  }),
-  palette: z.object({
-    primary: colorSchema,
-    secondary: colorSchema,
-    accent: colorSchema,
-    background: colorSchema,
-    text: colorSchema,
-  }),
-  objects: z.array(editableDesignObjectSchema).min(1).max(MAX_DESIGN_OBJECTS),
-});
+export const editableDesignSceneSchema = z
+  .object({
+    version: z.literal(DESIGN_SCENE_VERSION),
+    title: z.string().min(1).max(120),
+    canvas: z
+      .object({
+        width: positiveSize,
+        height: positiveSize,
+        background: colorSchema,
+      })
+      .strict(),
+    palette: z
+      .object({
+        primary: colorSchema,
+        secondary: colorSchema,
+        accent: colorSchema,
+        background: colorSchema,
+        text: colorSchema,
+      })
+      .strict(),
+    objects: z.array(editableDesignObjectSchema).min(1).max(MAX_DESIGN_OBJECTS),
+  })
+  .strict();
 
-export type EditableDesignScene = z.infer<typeof editableDesignSceneSchema>;
+/**
+ * Canonical Design scene schema.
+ * Same instance for OpenAI Structured Outputs, local parse, persistence, tests.
+ */
+export const EditableDesignSceneSchema = editableDesignSceneSchema;
+
+export type EditableDesignScene = z.infer<typeof EditableDesignSceneSchema>;
 export type EditableDesignObject = z.infer<typeof editableDesignObjectSchema>;
 export type EditableTextObject = z.infer<typeof editableTextObjectSchema>;
 export type EditableImageObject = z.infer<typeof editableImageObjectSchema>;
@@ -200,7 +235,10 @@ export const designUpdateChangesSchema = z.object({
   semanticRole: z.union([z.string().min(1).max(64), z.null()]),
   text: z.union([z.string().min(1).max(MAX_TEXT_LENGTH), z.null()]),
   fontFamily: z.union([z.string().min(1).max(64), z.null()]),
-  fontSize: z.union([finiteNumber.min(8).max(400), z.null()]),
+  fontSize: z.union([
+    finiteNumber.min(MIN_FONT_SIZE).max(MAX_FONT_SIZE),
+    z.null(),
+  ]),
   fontWeight: z.union([
     z.number().int().min(100).max(900),
     z.enum(["normal", "bold"]),
@@ -212,7 +250,7 @@ export const designUpdateChangesSchema = z.object({
   textAlign: z.union([z.enum(["left", "center", "right"]), z.null()]),
   fill: z.union([colorSchema, z.null()]),
   stroke: z.union([colorSchema, z.null()]),
-  strokeWidth: z.union([nonNeg.max(40), z.null()]),
+  strokeWidth: z.union([strokeWidthSchema, z.null()]),
   underline: z.union([z.boolean(), z.null()]),
   uppercase: z.union([z.boolean(), z.null()]),
   cornerRadius: z.union([nonNeg.max(500), z.null()]),
@@ -490,48 +528,6 @@ export function getDesignBriefJsonSchema(): Record<string, unknown> {
   return getDesignBriefJsonSchemaFromFormat();
 }
 
-export function getDesignSceneJsonSchema(): Record<string, unknown> {
-  return {
-    type: "object",
-    additionalProperties: false,
-    required: ["version", "title", "canvas", "palette", "objects"],
-    properties: {
-      version: { type: "number", enum: [1] },
-      title: { type: "string" },
-      canvas: {
-        type: "object",
-        additionalProperties: false,
-        required: ["width", "height", "background"],
-        properties: {
-          width: { type: "number" },
-          height: { type: "number" },
-          background: { type: "string" },
-        },
-      },
-      palette: {
-        type: "object",
-        additionalProperties: false,
-        required: ["primary", "secondary", "accent", "background", "text"],
-        properties: {
-          primary: { type: "string" },
-          secondary: { type: "string" },
-          accent: { type: "string" },
-          background: { type: "string" },
-          text: { type: "string" },
-        },
-      },
-      objects: {
-        type: "array",
-        minItems: 1,
-        maxItems: MAX_DESIGN_OBJECTS,
-        items: {
-          anyOf: designObjectAnyOf(),
-        },
-      },
-    },
-  };
-}
-
 export function getDesignOperationsJsonSchema(): Record<string, unknown> {
   return {
     type: "object",
@@ -682,13 +678,6 @@ export function createDesignBriefResponseFormat(): DesignResponseFormat {
   return asResponseFormat("design_brief", getDesignBriefJsonSchema());
 }
 
-export function createDesignSceneResponseFormat(): DesignResponseFormat {
-  return asResponseFormat(
-    "editable_design_scene",
-    getDesignSceneJsonSchema(),
-  );
-}
-
 export function createDesignOperationsResponseFormat(): DesignResponseFormat {
   return asResponseFormat(
     "design_operations",
@@ -696,24 +685,5 @@ export function createDesignOperationsResponseFormat(): DesignResponseFormat {
   );
 }
 
-/** Preflight all Design Structured Outputs schemas used in production. */
-export function createDesignResponseFormats(): {
-  brief: DesignResponseFormat;
-  scene: DesignResponseFormat;
-  operations: DesignResponseFormat;
-} {
-  return {
-    brief: createDesignBriefResponseFormat(),
-    scene: createDesignSceneResponseFormat(),
-    operations: createDesignOperationsResponseFormat(),
-  };
-}
-
-/** Alias expected by tests / callers. */
-export function createDesignResponseFormat(): {
-  brief: DesignResponseFormat;
-  scene: DesignResponseFormat;
-  operations: DesignResponseFormat;
-} {
-  return createDesignResponseFormats();
-}
+// Scene response formats live in design-response-formats.ts to avoid a
+// circular import with design-scene-format.ts (zodTextFormat path).

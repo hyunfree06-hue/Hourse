@@ -10,13 +10,16 @@ export {
   preflightDesignStructuredOutputs,
 } from "@/lib/design-scene/design-generation";
 export {
-  createDesignResponseFormat,
-  createDesignResponseFormats,
   createDesignBriefResponseFormat,
-  createDesignSceneResponseFormat,
   createDesignOperationsResponseFormat,
   assertOpenAiStrictJsonSchema,
 } from "@/lib/design-scene/schema";
+export {
+  createDesignResponseFormat,
+  createDesignResponseFormats,
+  createDesignSceneResponseFormat,
+  getDesignSceneJsonSchema,
+} from "@/lib/design-scene/design-response-formats";
 export {
   DesignBriefSchema,
   designBriefSchema,

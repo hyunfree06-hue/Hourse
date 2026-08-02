@@ -318,7 +318,7 @@ describe("prompt limit", () => {
     );
     expect(panel).toContain("MAX_DESIGN_PROMPT_LENGTH");
     expect(panel).toContain("metaKey");
-    expect(panel).toContain("Show generated design");
+    expect(panel).toContain("Show last completed design");
     expect(schema).toContain("MAX_DESIGN_PROMPT_LENGTH");
     expect(panel).not.toMatch(/maxLength=\{2000\}/);
     expect(panel).not.toMatch(/maxLength=\{1000\}/);

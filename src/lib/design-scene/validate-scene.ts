@@ -1,5 +1,5 @@
 import {
-  editableDesignSceneSchema,
+  EditableDesignSceneSchema,
   MAX_DESIGN_GROUPS,
   MAX_IMAGE_PLACEHOLDERS,
   MAX_PATH_LENGTH,
@@ -8,10 +8,61 @@ import {
 } from "@/lib/design-scene/schema";
 
 export class DesignSceneValidationError extends Error {
-  constructor(message: string) {
+  readonly issues: ReturnType<typeof summarizeFirstSceneZodIssue>[];
+
+  constructor(
+    message: string,
+    issues: ReturnType<typeof summarizeFirstSceneZodIssue>[] = [],
+  ) {
     super(message);
     this.name = "DesignSceneValidationError";
+    this.issues = issues;
   }
+}
+
+function getValueAtPath(raw: unknown, path: PropertyKey[]): unknown {
+  let cursor: unknown = raw;
+  for (const key of path) {
+    if (cursor == null || typeof cursor !== "object") return undefined;
+    cursor = (cursor as Record<string | number, unknown>)[
+      key as string | number
+    ];
+  }
+  return cursor;
+}
+
+/**
+ * Safe first-issue summary for scene schema failures.
+ * Does not log prompts or full provider payloads.
+ */
+export function summarizeFirstSceneZodIssue(
+  issue: {
+    code: string;
+    path: PropertyKey[];
+    minimum?: unknown;
+    maximum?: unknown;
+    message?: string;
+  },
+  raw: unknown,
+): {
+  path: string;
+  code: string;
+  minimum: number | null;
+  receivedType: string;
+  receivedValue: number | undefined;
+} {
+  const failingValue = getValueAtPath(raw, issue.path);
+  return {
+    path: issue.path.map(String).join("."),
+    code: issue.code,
+    minimum:
+      "minimum" in issue && typeof issue.minimum === "number"
+        ? issue.minimum
+        : null,
+    receivedType: typeof failingValue,
+    receivedValue:
+      typeof failingValue === "number" ? failingValue : undefined,
+  };
 }
 
 function assertColorSafe(value: string | null | undefined, field: string) {
@@ -50,10 +101,13 @@ function assertObjectBounds(obj: EditableDesignObject, canvasW: number, canvasH:
 }
 
 export function validateDesignScene(input: unknown): EditableDesignScene {
-  const parsed = editableDesignSceneSchema.safeParse(input);
+  const parsed = EditableDesignSceneSchema.safeParse(input);
   if (!parsed.success) {
+    const first = parsed.error.issues[0];
+    const issues = first ? [summarizeFirstSceneZodIssue(first, input)] : [];
     throw new DesignSceneValidationError(
-      `Invalid design scene: ${parsed.error.issues[0]?.message ?? "schema error"}`,
+      `Invalid design scene: ${first?.message ?? "schema error"}`,
+      issues,
     );
   }
 
@@ -97,11 +151,6 @@ export function validateDesignScene(input: unknown): EditableDesignScene {
 
     if (obj.type === "group") {
       groupCount += 1;
-      for (const childId of obj.childIds) {
-        if (!ids.has(childId) && !scene.objects.some((o) => o.id === childId)) {
-          // checked in second pass after all ids collected
-        }
-      }
     }
   }
 
@@ -112,7 +161,6 @@ export function validateDesignScene(input: unknown): EditableDesignScene {
     throw new DesignSceneValidationError(`Too many image placeholders (max ${MAX_IMAGE_PLACEHOLDERS})`);
   }
 
-  // Resolve parent/child integrity
   for (const obj of scene.objects) {
     if (obj.parentId && !ids.has(obj.parentId)) {
       throw new DesignSceneValidationError(`Unknown parentId on ${obj.id}`);
@@ -132,4 +180,9 @@ export function validateDesignScene(input: unknown): EditableDesignScene {
   }
 
   return scene;
+}
+
+/** Parse-only helper for diagnostics / recoverable-issue detection. */
+export function safeParseDesignScene(input: unknown) {
+  return EditableDesignSceneSchema.safeParse(input);
 }
