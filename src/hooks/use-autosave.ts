@@ -83,6 +83,8 @@ export function useAutosave({ projectId, initialUpdatedAt }: Props) {
   const savingRef = useRef(false);
   const queuedForceRef = useRef(false);
   const failureCooldownRef = useRef(0);
+  /** Serialize concurrent save requests (same-tab optimistic lock races). */
+  const saveChainRef = useRef(Promise.resolve(true));
 
   useEffect(() => {
     updatedAtRef.current = initialUpdatedAt;
@@ -92,6 +94,7 @@ export function useAutosave({ projectId, initialUpdatedAt }: Props) {
 
   const save = useCallback(
     async (force = false): Promise<boolean> => {
+      const run = async (): Promise<boolean> => {
       if (savingRef.current) {
         if (force) queuedForceRef.current = true;
         return false;
@@ -226,6 +229,14 @@ export function useAutosave({ projectId, initialUpdatedAt }: Props) {
           });
         }
       }
+      };
+
+      const next = saveChainRef.current.then(run, run);
+      saveChainRef.current = next.then(
+        () => true,
+        () => true,
+      );
+      return next;
     },
     [backupKey, projectId, setSaveStatus],
   );

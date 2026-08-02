@@ -13,6 +13,7 @@ import {
   QUALITY_LABELS,
   type AiQuality,
 } from "@/config/credits";
+import { editorConfig } from "@/config/editor";
 import { useEditorStore } from "@/stores/editor-store";
 import { aspectRatioLabel } from "@/lib/utils/geometry";
 import { createObjectId } from "@/lib/canvas/custom-properties";
@@ -27,6 +28,11 @@ import {
   applyDesignOperationsToCanvas,
   logDesignApplyError,
 } from "@/lib/design-scene/apply-operations";
+import {
+  isDesignRegionLargeEnough,
+  MIN_DESIGN_HEIGHT,
+  MIN_DESIGN_WIDTH,
+} from "@/lib/design-scene/region";
 
 type Availability = { openai: boolean; bfl: boolean };
 
@@ -41,7 +47,15 @@ const PROMPT_CHIPS = [
 const APPLY_ERROR_MESSAGE =
   "The design was created, but we couldn't add it to the canvas.";
 
-function mapGenerationError(code?: string, fallback?: string): string {
+function mapGenerationError(
+  code?: string,
+  fallback?: string,
+  opts?: { refunded?: boolean },
+): string {
+  const refunded = opts?.refunded === true;
+  const withRefund = (msg: string) =>
+    refunded ? `${msg} Your credits were restored.` : msg;
+
   switch (code) {
     case "PROJECT_SAVE_FAILED":
       return "We couldn't save this project. Retry the save before generating.";
@@ -49,19 +63,40 @@ function mapGenerationError(code?: string, fallback?: string): string {
       return "You don't have enough credits for this generation.";
     case "INVALID_REFINEMENT_SELECTION":
       return "Select at least one editable object to refine.";
+    case "DESIGN_REGION_TOO_SMALL":
+      return `Draw a larger area to create an editable design. Minimum size: ${MIN_DESIGN_WIDTH} × ${MIN_DESIGN_HEIGHT}.`;
+    case "DESIGN_PROVIDER_REFUSED":
+      return withRefund("This design request could not be completed.");
+    case "DESIGN_PROVIDER_INCOMPLETE":
+      return withRefund("The design model did not finish the request.");
+    case "DESIGN_OPERATIONS_EMPTY":
+    case "DESIGN_OUTPUT_EMPTY":
+      return withRefund("No editable elements were created.");
+    case "DESIGN_SCENE_INVALID":
+    case "DESIGN_OUTPUT_SCHEMA_INVALID":
+    case "DESIGN_OUTPUT_PARSE_FAILED":
+    case "DESIGN_NORMALIZATION_FAILED":
+    case "DESIGN_OBJECT_CONVERSION_FAILED":
+      return withRefund("The design could not be prepared.");
     case "DESIGN_SCHEMA_INVALID":
     case "DESIGN_MODEL_NOT_CONFIGURED":
-      return "Design generation is temporarily unavailable. Your credits were restored.";
+      return withRefund("Design generation is temporarily unavailable.");
     case "PROVIDER_NOT_CONFIGURED":
       return "Design generation is not configured.";
     case "AUTH_REQUIRED":
     case "unauthorized":
       return "Your session has expired. Sign in again.";
+    case "CREDIT_REFUND_ERROR":
+      return "The design could not be created. We couldn't restore the credits automatically.";
     default:
-      return (
-        fallback ||
-        "We couldn't create this design. Your credits were restored."
-      );
+      if (fallback && !/credits were restored/i.test(fallback)) {
+        return withRefund(fallback);
+      }
+      if (fallback && refunded) return fallback;
+      if (fallback && !refunded) {
+        return fallback.replace(/\s*Your credits were restored\.?/i, "").trim();
+      }
+      return withRefund("We couldn't create this design.");
   }
 }
 
@@ -139,6 +174,11 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
   }, [selected, selectionEpoch]);
 
   const isRefine = editableSelection.length > 0;
+
+  const regionTooSmall =
+    !isRefine &&
+    !!aiRegion &&
+    !isDesignRegionLargeEnough(aiRegion.width, aiRegion.height);
 
   const cost = useMemo(
     () =>
@@ -323,6 +363,16 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
       setError("Draw an area on the canvas first.");
       return;
     }
+    if (
+      !refining &&
+      aiRegion &&
+      !isDesignRegionLargeEnough(aiRegion.width, aiRegion.height)
+    ) {
+      setError(
+        `Draw a larger area to create an editable design. Minimum size: ${MIN_DESIGN_WIDTH} × ${MIN_DESIGN_HEIGHT}.`,
+      );
+      return;
+    }
     if (!availability.openai) {
       setError("Design generation is not configured.");
       return;
@@ -419,9 +469,23 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
       });
       const data = await res.json();
       if (!res.ok) {
+        if (typeof data.creditBalance === "number") {
+          setCredits(data.creditBalance);
+        }
         throw Object.assign(
-          new Error(mapGenerationError(data.error?.code, data.error?.message)),
-          { code: data.error?.code },
+          new Error(
+            mapGenerationError(data.error?.code, data.error?.message, {
+              refunded: data.refunded === true,
+            }),
+          ),
+          {
+            code: data.error?.code,
+            refunded: data.refunded === true,
+            creditBalance:
+              typeof data.creditBalance === "number"
+                ? data.creditBalance
+                : undefined,
+          },
         );
       }
 
@@ -464,14 +528,37 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
         });
       }
     } catch (err) {
+      const errObj = err as {
+        code?: string;
+        message?: string;
+        refunded?: boolean;
+        creditBalance?: number;
+      };
+      if (typeof errObj.creditBalance === "number") {
+        setCredits(errObj.creditBalance);
+      } else if (errObj.refunded === true) {
+        // Balance already restored server-side; keep optimistic previous if unknown.
+        setCredits(previousCredits);
+      } else {
+        // Do not claim a refund restored the balance when the server did not confirm.
+        void fetch("/api/account")
+          .then((r) => r.json())
+          .then((account) => {
+            if (typeof account?.profile?.credit_balance === "number") {
+              setCredits(account.profile.credit_balance);
+            }
+          })
+          .catch(() => {
+            /* ignore */
+          });
+      }
+
       const message =
         err instanceof Error
-          ? mapGenerationError(
-              (err as { code?: string }).code,
-              err.message,
-            )
-          : "We couldn't create this design. Your credits were restored.";
-      // Safari: "null is not an object (evaluating 't.x')"
+          ? mapGenerationError(errObj.code, err.message, {
+              refunded: errObj.refunded === true,
+            })
+          : "We couldn't create this design.";
       const looksLikeRawJs =
         /TypeError|Cannot read propert|is not an object \(evaluating/i.test(
           message,
@@ -480,7 +567,6 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
       setError(safeMessage);
       setStatus(null);
       toast.error(safeMessage);
-      setCredits(previousCredits);
     } finally {
       setLoading(false);
     }
@@ -492,9 +578,16 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
         <div>
           <h2 className="text-sm font-semibold text-neutral-900">Create</h2>
           {aiRegion ? (
-            <p className="mt-0.5 text-[11px] text-neutral-500">
+            <p
+              className={`mt-0.5 text-[11px] ${
+                regionTooSmall ? "text-amber-600" : "text-neutral-500"
+              }`}
+            >
               {Math.round(aiRegion.width)}&times;{Math.round(aiRegion.height)}{" "}
               &middot; {aspectRatioLabel(aiRegion.width, aiRegion.height)}
+              {regionTooSmall
+                ? ` · min ${editorConfig.minDesignRegionWidth}×${editorConfig.minDesignRegionHeight}`
+                : ""}
             </p>
           ) : isRefine ? (
             <p className="mt-0.5 text-[11px] text-neutral-500">
@@ -502,7 +595,8 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
             </p>
           ) : (
             <p className="mt-0.5 text-[11px] text-amber-600">
-              Draw an area on the canvas
+              Draw an area on the canvas (min {MIN_DESIGN_WIDTH}×
+              {MIN_DESIGN_HEIGHT})
             </p>
           )}
         </div>
@@ -595,7 +689,11 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
         <Button
           className="w-full bg-[#635BFF] text-white hover:bg-[#5851db]"
           loading={loading}
-          disabled={!prompt.trim() || !availability.openai}
+          disabled={
+            !prompt.trim() ||
+            !availability.openai ||
+            (!isRefine && (!aiRegion || regionTooSmall))
+          }
           onClick={() => void handleGenerate()}
         >
           {loading

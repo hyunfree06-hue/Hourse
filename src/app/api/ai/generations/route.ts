@@ -32,6 +32,11 @@ import {
 import { fillDesignImagePlaceholders } from "@/lib/design-scene/fill-image-layers";
 import { DESIGN_SCENE_VERSION } from "@/lib/design-scene/schema";
 import { filterEditableRefinementObjects } from "@/lib/design-scene/refinement-selection";
+import { assertDesignRegionSize } from "@/lib/design-scene/region";
+import {
+  DesignGenerationError,
+  withCreditsRestoredMessage,
+} from "@/lib/design-scene/errors";
 
 export const runtime = "nodejs";
 
@@ -222,6 +227,15 @@ export async function POST(req: Request) {
       }
       designRefineObjects = filtered.objects;
       designRefineIds = filtered.ids;
+
+      // Reject unusably small Design frames before any credit mutation.
+      if (designRefineIds.length === 0) {
+        assertDesignRegionSize(
+          input.selection.width,
+          input.selection.height,
+          requestId,
+        );
+      }
     }
 
     logServerInfo({
@@ -348,6 +362,8 @@ export async function POST(req: Request) {
             height: input.selection.height,
           },
           requestId,
+          generationId: generation.id,
+          projectId: input.projectId,
           formats: designFormats
             ? {
                 brief: designFormats.brief,
@@ -356,6 +372,16 @@ export async function POST(req: Request) {
               }
             : undefined,
           model: designFormats?.model,
+        });
+
+        logServerInfo({
+          requestId,
+          route: "POST /api/ai/generations",
+          stage: "generation_persistence",
+          userId,
+          generationId,
+          projectId: input.projectId,
+          operationCount: refined.operations.length,
         });
 
         // Persist operations so the client can retry apply without recharging.
@@ -441,6 +467,8 @@ export async function POST(req: Request) {
         height: input.selection.height,
         quality: input.quality,
         requestId,
+        generationId: generation.id,
+        projectId: input.projectId,
         formats: designFormats
           ? {
               brief: designFormats.brief,
@@ -452,6 +480,16 @@ export async function POST(req: Request) {
       });
       const brief = generated.brief;
       const scene = generated.scene;
+
+      logServerInfo({
+        requestId,
+        route: "POST /api/ai/generations",
+        stage: "generation_persistence",
+        userId,
+        generationId,
+        projectId: input.projectId,
+        objectCount: scene.objects.length,
+      });
 
       const filled = await fillDesignImagePlaceholders({
         admin,
@@ -474,9 +512,11 @@ export async function POST(req: Request) {
       logServerInfo({
         requestId,
         route: "POST /api/ai/generations",
-        stage: "design_complete",
+        stage: "design_generation_complete",
         userId,
         generationId,
+        projectId: input.projectId,
+        objectCount: filled.scene.objects.length,
       });
 
       return NextResponse.json({
@@ -641,7 +681,16 @@ export async function POST(req: Request) {
     }
 
     if (providerResult.status === "failed") {
-      await failAndRefund({
+      logServerInfo({
+        requestId,
+        route: "POST /api/ai/generations",
+        stage: "refund_start",
+        userId,
+        generationId,
+        projectId: input.projectId,
+        code: providerResult.errorCode ?? "PROVIDER_REQUEST_FAILED",
+      });
+      const refundResult = await failAndRefund({
         admin,
         generationId: generation.id,
         userId: auth.user.id,
@@ -654,12 +703,37 @@ export async function POST(req: Request) {
         shouldRefund: creditsConsumed,
       });
       creditsConsumed = false;
+      logServerInfo({
+        requestId,
+        route: "POST /api/ai/generations",
+        stage: "refund_complete",
+        userId,
+        generationId,
+        projectId: input.projectId,
+        refunded: refundResult.refunded,
+        creditBalance: refundResult.creditBalance,
+      });
       const { data: failed } = await admin
         .from("ai_generations")
         .select("*")
         .eq("id", generation.id)
         .single();
-      return NextResponse.json({ generation: failed, requestId }, { status: 422 });
+      return NextResponse.json(
+        {
+          error: {
+            code: providerResult.errorCode ?? "PROVIDER_REQUEST_FAILED",
+            message:
+              providerResult.errorMessage ??
+              "The image model couldn't complete this request.",
+            requestId,
+          },
+          generation: failed,
+          refunded: refundResult.refunded,
+          creditBalance: refundResult.creditBalance,
+          requestId,
+        },
+        { status: 502 },
+      );
     }
 
     if (providerResult.status === "completed") {
@@ -695,50 +769,85 @@ export async function POST(req: Request) {
   } catch (error) {
     const errorCode =
       error instanceof AppError ? error.code : "INTERNAL_ERROR";
-    const userMessage =
+    const failureStage =
+      error instanceof DesignGenerationError
+        ? error.failureStage
+        : error instanceof AppError &&
+            error.details &&
+            typeof error.details === "object" &&
+            "stage" in (error.details as object)
+          ? String((error.details as { stage?: string }).stage ?? "generation_failed")
+          : "generation_failed";
+
+    let refunded = false;
+    let creditBalance: number | null = null;
+    let refundFailed = false;
+
+    const baseMessage =
       errorCode === "DESIGN_SCHEMA_INVALID"
-        ? "Design generation is temporarily unavailable. Your credits were restored."
+        ? "Design generation is temporarily unavailable."
         : error instanceof AppError
           ? error.message
-          : "We couldn't create this design. Your credits were restored.";
+          : "We couldn't create this design.";
 
-    if (errorCode === "DESIGN_SCHEMA_INVALID") {
-      logServerError({
+    if (generationId && userId) {
+      logServerInfo({
         requestId,
         route: "POST /api/ai/generations",
-        stage: "structured_output_schema",
+        stage: "generation_failed",
         userId,
         generationId,
-        code: "DESIGN_SCHEMA_INVALID",
-        message:
-          error instanceof AppError
-            ? String(error.details ?? error.message)
-            : error instanceof Error
-              ? error.message
-              : "schema invalid",
+        code: errorCode,
+        failureStage,
       });
     }
 
     if (generationId && userId && creditsConsumed) {
       try {
+        logServerInfo({
+          requestId,
+          route: "POST /api/ai/generations",
+          stage: "refund_start",
+          userId,
+          generationId,
+          code: errorCode,
+          failureStage,
+        });
         const admin = createServiceClient();
-        await failAndRefund({
+        const refundResult = await failAndRefund({
           admin,
           generationId,
           userId,
           amount: creditsCharged,
           errorCode,
-          errorMessage: userMessage,
+          errorMessage: withCreditsRestoredMessage(baseMessage, true),
           requestId,
           shouldRefund: true,
         });
+        refunded = refundResult.refunded;
+        creditBalance = refundResult.creditBalance;
+        creditsConsumed = false;
+        logServerInfo({
+          requestId,
+          route: "POST /api/ai/generations",
+          stage: "refund_complete",
+          userId,
+          generationId,
+          code: errorCode,
+          failureStage,
+          refunded,
+          creditBalance,
+        });
       } catch (refundError) {
+        refundFailed = true;
         logServerError({
           requestId,
           route: "POST /api/ai/generations",
-          stage: "refund",
+          stage: "refund_failed",
           userId,
           generationId,
+          code: "CREDIT_REFUND_ERROR",
+          failureStage: "refund_failed",
           message:
             refundError instanceof Error ? refundError.message : "refund failed",
         });
@@ -746,20 +855,25 @@ export async function POST(req: Request) {
     } else if (generationId && userId) {
       try {
         const admin = createServiceClient();
-        await failAndRefund({
+        const refundResult = await failAndRefund({
           admin,
           generationId,
           userId,
           amount: 0,
           errorCode,
-          errorMessage: userMessage,
+          errorMessage: baseMessage,
           requestId,
           shouldRefund: false,
         });
+        creditBalance = refundResult.creditBalance;
       } catch {
         // best effort status update
       }
     }
+
+    const userMessage = refundFailed
+      ? "The design could not be created. We couldn't restore the credits automatically."
+      : withCreditsRestoredMessage(baseMessage, refunded);
 
     if (error instanceof AppError && errorCode === "DESIGN_SCHEMA_INVALID") {
       return NextResponse.json(
@@ -769,17 +883,45 @@ export async function POST(req: Request) {
             message: userMessage,
             requestId,
           },
+          refunded,
+          creditBalance,
+          requestId,
         },
         { status: 503 },
       );
     }
 
-    const res = toErrorResponse(
-      error instanceof AppError
-        ? new AppError(error.code, userMessage, error.status, error.details, requestId)
-        : error,
-      requestId,
+    if (error instanceof DesignGenerationError || error instanceof AppError) {
+      const status =
+        error instanceof DesignGenerationError
+          ? error.status
+          : error instanceof AppError
+            ? error.status
+            : 500;
+      return NextResponse.json(
+        {
+          error: {
+            code: errorCode,
+            message: userMessage,
+            requestId,
+          },
+          refunded,
+          creditBalance,
+          requestId,
+        },
+        { status },
+      );
+    }
+
+    const res = toErrorResponse(error, requestId);
+    return NextResponse.json(
+      {
+        ...res.body,
+        refunded,
+        creditBalance,
+        requestId,
+      },
+      { status: res.status },
     );
-    return NextResponse.json(res.body, { status: res.status });
   }
 }

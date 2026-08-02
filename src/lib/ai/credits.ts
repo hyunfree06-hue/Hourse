@@ -90,6 +90,99 @@ export async function refundCreditsAtomic(input: {
   return data as number;
 }
 
+/**
+ * Refund a failed generation when a debit exists but no matching refund ledger row.
+ * Idempotent via generation_refund:{generationId}.
+ */
+export async function reconcileFailedGenerationRefund(input: {
+  generationId: string;
+  requestId?: string;
+}): Promise<{
+  refunded: boolean;
+  alreadyRefunded: boolean;
+  creditBalance: number | null;
+  amount: number;
+}> {
+  const admin = createServiceClient();
+  const { data: generation, error } = await admin
+    .from("ai_generations")
+    .select("id, user_id, credits_charged, status, idempotency_key")
+    .eq("id", input.generationId)
+    .maybeSingle();
+
+  if (error || !generation) {
+    throw new AppError("not_found", "Generation not found", 404, undefined, input.requestId);
+  }
+
+  const amount = Number(generation.credits_charged ?? 0);
+  const refundKey = `generation_refund:${generation.id}`;
+  const { data: existingRefund } = await admin
+    .from("credit_ledger")
+    .select("id, balance_after")
+    .eq("idempotency_key", refundKey)
+    .maybeSingle();
+
+  if (existingRefund) {
+    return {
+      refunded: false,
+      alreadyRefunded: true,
+      creditBalance: existingRefund.balance_after,
+      amount,
+    };
+  }
+
+  if (amount <= 0) {
+    const { data: profile } = await admin
+      .from("profiles")
+      .select("credit_balance")
+      .eq("id", generation.user_id)
+      .maybeSingle();
+    return {
+      refunded: false,
+      alreadyRefunded: false,
+      creditBalance: profile?.credit_balance ?? null,
+      amount: 0,
+    };
+  }
+
+  const debitKey = `generation:${generation.idempotency_key}`;
+  const { data: debit } = await admin
+    .from("credit_ledger")
+    .select("id")
+    .eq("idempotency_key", debitKey)
+    .maybeSingle();
+
+  if (!debit) {
+    const { data: profile } = await admin
+      .from("profiles")
+      .select("credit_balance")
+      .eq("id", generation.user_id)
+      .maybeSingle();
+    return {
+      refunded: false,
+      alreadyRefunded: false,
+      creditBalance: profile?.credit_balance ?? null,
+      amount,
+    };
+  }
+
+  const creditBalance = await refundCreditsAtomic({
+    userId: generation.user_id,
+    amount,
+    idempotencyKey: refundKey,
+    generationId: generation.id,
+    requestId: input.requestId,
+    metadata: { reconcile: true },
+  });
+
+  return {
+    refunded: true,
+    alreadyRefunded: false,
+    creditBalance,
+    amount,
+  };
+}
+
 export async function grantCreditsAtomic(input: {
   userId: string;
   amount: number;

@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { getServerEnv } from "@/lib/validation/env.server";
-import { AppError } from "@/lib/utils/errors";
+import { AppError, logServerError, logServerInfo } from "@/lib/utils/errors";
 import {
   createDesignBriefResponseFormat,
   createDesignOperationsResponseFormat,
@@ -13,9 +13,13 @@ import {
   type DesignOperation,
   type EditableDesignScene,
 } from "@/lib/design-scene/schema";
-import { validateDesignScene } from "@/lib/design-scene/validate-scene";
-import { normalizeDesignScene } from "@/lib/design-scene/normalize-scene";
+import { validateDesignScene, DesignSceneValidationError } from "@/lib/design-scene/validate-scene";
+import { normalizeDesignSceneWithDiagnostics } from "@/lib/design-scene/normalize-diagnostics";
 import { designFonts } from "@/lib/design-scene/font-registry";
+import {
+  DesignGenerationError,
+  type DesignFailureStage,
+} from "@/lib/design-scene/errors";
 
 export function resolveOpenAiDesignModel(): string {
   const env = getServerEnv();
@@ -23,7 +27,7 @@ export function resolveOpenAiDesignModel(): string {
   if (configured) return configured;
   throw new AppError(
     "DESIGN_MODEL_NOT_CONFIGURED",
-    "Design generation is temporarily unavailable. Your credits were restored.",
+    "Design generation is temporarily unavailable.",
     503,
   );
 }
@@ -46,11 +50,62 @@ export function preflightDesignStructuredOutputs(): {
     const detail = error instanceof Error ? error.message : "unknown";
     throw new AppError(
       "DESIGN_SCHEMA_INVALID",
-      "Design generation is temporarily unavailable. Your credits were restored.",
+      "Design generation is temporarily unavailable.",
       503,
       { stage: "structured_output_schema", detail },
     );
   }
+}
+
+type DesignLogCtx = {
+  requestId: string;
+  generationId?: string;
+  projectId?: string;
+};
+
+function designLog(
+  stage: DesignFailureStage | string,
+  ctx: DesignLogCtx,
+  extra?: Record<string, unknown>,
+) {
+  logServerInfo({
+    requestId: ctx.requestId,
+    route: "design_generation",
+    stage,
+    generationId: ctx.generationId,
+    projectId: ctx.projectId,
+    ...extra,
+  });
+}
+
+function designFailLog(
+  stage: DesignFailureStage | string,
+  ctx: DesignLogCtx,
+  code: string,
+  extra?: Record<string, unknown>,
+) {
+  logServerError({
+    requestId: ctx.requestId,
+    route: "design_generation",
+    stage,
+    generationId: ctx.generationId,
+    projectId: ctx.projectId,
+    code,
+    failureStage: stage,
+    ...extra,
+  });
+}
+
+function extractRefusal(response: OpenAI.Responses.Response): string | null {
+  for (const item of response.output ?? []) {
+    if (item.type !== "message") continue;
+    for (const part of item.content ?? []) {
+      if (part.type === "refusal" && typeof part.refusal === "string") {
+        return part.refusal;
+      }
+    }
+  }
+  return null;
 }
 
 function extractOutputText(response: OpenAI.Responses.Response): string {
@@ -69,25 +124,102 @@ function extractOutputText(response: OpenAI.Responses.Response): string {
   return chunks.join("\n");
 }
 
-function parseJsonObject(text: string): unknown {
+function assertUsableProviderResponse(
+  response: OpenAI.Responses.Response,
+  ctx: DesignLogCtx,
+): void {
+  designLog("provider_response_received", ctx, {
+    providerStatus: response.status,
+    outputItemCount: response.output?.length ?? 0,
+  });
+  designLog("provider_response_status", ctx, {
+    providerStatus: response.status,
+    hasError: Boolean(response.error),
+    incompleteReason:
+      response.incomplete_details &&
+      typeof response.incomplete_details === "object" &&
+      "reason" in response.incomplete_details
+        ? String(
+            (response.incomplete_details as { reason?: string }).reason ?? "",
+          )
+        : undefined,
+  });
+
+  const refusal = extractRefusal(response);
+  if (refusal) {
+    designFailLog("provider_refusal", ctx, "DESIGN_PROVIDER_REFUSED");
+    throw new DesignGenerationError("DESIGN_PROVIDER_REFUSED", {
+      stage: "provider_refusal",
+      requestId: ctx.requestId,
+    });
+  }
+
+  if (response.status === "incomplete") {
+    designFailLog("provider_incomplete", ctx, "DESIGN_PROVIDER_INCOMPLETE");
+    throw new DesignGenerationError("DESIGN_PROVIDER_INCOMPLETE", {
+      stage: "provider_incomplete",
+      requestId: ctx.requestId,
+    });
+  }
+
+  if (response.status === "failed" || response.error) {
+    designFailLog("provider_response_status", ctx, "DESIGN_PROVIDER_INCOMPLETE", {
+      providerErrorCode:
+        response.error && typeof response.error === "object"
+          ? String(
+              (response.error as { code?: string }).code ??
+                (response.error as { message?: string }).message ??
+                "",
+            ).slice(0, 80)
+          : undefined,
+    });
+    throw new DesignGenerationError("DESIGN_PROVIDER_INCOMPLETE", {
+      stage: "provider_response_status",
+      requestId: ctx.requestId,
+    });
+  }
+
+  if (!response.output || response.output.length === 0) {
+    designFailLog("provider_response_received", ctx, "DESIGN_OUTPUT_EMPTY");
+    throw new DesignGenerationError("DESIGN_OUTPUT_EMPTY", {
+      stage: "provider_response_received",
+      requestId: ctx.requestId,
+    });
+  }
+}
+
+function parseJsonObject(text: string, ctx: DesignLogCtx): unknown {
+  designLog("structured_output_parse", ctx);
   const trimmed = text.trim();
+  if (!trimmed) {
+    designFailLog("structured_output_parse", ctx, "DESIGN_OUTPUT_PARSE_FAILED");
+    throw new DesignGenerationError("DESIGN_OUTPUT_PARSE_FAILED", {
+      stage: "structured_output_parse",
+      requestId: ctx.requestId,
+      internalReason: "EMPTY_OUTPUT_TEXT",
+    });
+  }
   try {
     return JSON.parse(trimmed);
   } catch {
     const start = trimmed.indexOf("{");
     const end = trimmed.lastIndexOf("}");
     if (start >= 0 && end > start) {
-      return JSON.parse(trimmed.slice(start, end + 1));
+      try {
+        return JSON.parse(trimmed.slice(start, end + 1));
+      } catch {
+        // fall through
+      }
     }
-    throw new AppError(
-      "DESIGN_PARSE_FAILED",
-      "We couldn't create this design. Your credits were restored.",
-      422,
-    );
+    designFailLog("structured_output_parse", ctx, "DESIGN_OUTPUT_PARSE_FAILED");
+    throw new DesignGenerationError("DESIGN_OUTPUT_PARSE_FAILED", {
+      stage: "structured_output_parse",
+      requestId: ctx.requestId,
+    });
   }
 }
 
-function mapProviderSchemaError(error: unknown): never {
+function mapProviderSchemaError(error: unknown, ctx: DesignLogCtx): never {
   const message = error instanceof Error ? error.message : String(error);
   if (
     /optional\(\)|nullish\(\)|not supported by the API|Structured Outputs schema|invalid_json_schema|schema field at/i.test(
@@ -96,19 +228,22 @@ function mapProviderSchemaError(error: unknown): never {
   ) {
     throw new AppError(
       "DESIGN_SCHEMA_INVALID",
-      "Design generation is temporarily unavailable. Your credits were restored.",
+      "Design generation is temporarily unavailable.",
       503,
       { stage: "structured_output_schema", detail: message },
+      ctx.requestId,
     );
   }
-  throw error instanceof AppError
-    ? error
-    : new AppError(
-        "PROVIDER_REQUEST_FAILED",
-        "We couldn't create this design. Your credits were restored.",
-        422,
-        { detail: message },
-      );
+  if (error instanceof DesignGenerationError || error instanceof AppError) {
+    throw error;
+  }
+  designFailLog("provider_request_start", ctx, "DESIGN_PROVIDER_INCOMPLETE", {
+    safeError: message.slice(0, 160),
+  });
+  throw new DesignGenerationError("DESIGN_PROVIDER_INCOMPLETE", {
+    stage: "provider_request_start",
+    requestId: ctx.requestId,
+  });
 }
 
 export type DesignGenerationInput = {
@@ -117,6 +252,8 @@ export type DesignGenerationInput = {
   height: number;
   quality: "fast" | "standard" | "high";
   requestId: string;
+  generationId?: string;
+  projectId?: string;
   /** Prebuilt formats from preflight (avoids rebuilding after charge). */
   formats?: ReturnType<typeof createDesignResponseFormats>;
   model?: string;
@@ -131,6 +268,8 @@ export type DesignRefineInput = {
   nearbySummary?: string;
   selectedBounds?: { left: number; top: number; width: number; height: number };
   requestId: string;
+  generationId?: string;
+  projectId?: string;
   formats?: ReturnType<typeof createDesignResponseFormats>;
   model?: string;
 };
@@ -152,7 +291,9 @@ async function generateBrief(
   model: string,
   input: DesignGenerationInput,
   briefFormat: ReturnType<typeof createDesignBriefResponseFormat>,
+  ctx: DesignLogCtx,
 ): Promise<DesignBrief> {
+  designLog("provider_request_start", ctx, { pass: "brief" });
   let response: OpenAI.Responses.Response;
   try {
     response = await client.responses.create({
@@ -176,18 +317,29 @@ async function generateBrief(
       text: { format: briefFormat },
     });
   } catch (error) {
-    mapProviderSchemaError(error);
+    mapProviderSchemaError(error, ctx);
   }
 
-  const parsed = designBriefSchema.safeParse(
-    parseJsonObject(extractOutputText(response)),
-  );
+  assertUsableProviderResponse(response, ctx);
+  const raw = parseJsonObject(extractOutputText(response), ctx);
+  if (raw == null) {
+    throw new DesignGenerationError("DESIGN_OUTPUT_PARSE_FAILED", {
+      stage: "structured_output_parse",
+      requestId: ctx.requestId,
+    });
+  }
+
+  const parsed = designBriefSchema.safeParse(raw);
   if (!parsed.success) {
-    throw new AppError(
-      "DESIGN_BRIEF_INVALID",
-      "We couldn't create this design. Your credits were restored.",
-      422,
-    );
+    designFailLog("structured_output_parse", ctx, "DESIGN_OUTPUT_SCHEMA_INVALID", {
+      issueCount: parsed.error.issues.length,
+      firstPath: parsed.error.issues[0]?.path?.join(".") ?? null,
+    });
+    throw new DesignGenerationError("DESIGN_OUTPUT_SCHEMA_INVALID", {
+      stage: "structured_output_parse",
+      requestId: ctx.requestId,
+      internalReason: "BRIEF_SCHEMA_MISMATCH",
+    });
   }
   return parsed.data;
 }
@@ -198,7 +350,9 @@ async function generateSceneFromBrief(
   input: DesignGenerationInput,
   brief: DesignBrief,
   sceneFormat: ReturnType<typeof createDesignSceneResponseFormat>,
+  ctx: DesignLogCtx,
 ): Promise<EditableDesignScene> {
+  designLog("provider_request_start", ctx, { pass: "scene" });
   let response: OpenAI.Responses.Response;
   try {
     response = await client.responses.create({
@@ -232,50 +386,211 @@ async function generateSceneFromBrief(
       text: { format: sceneFormat },
     });
   } catch (error) {
-    mapProviderSchemaError(error);
+    mapProviderSchemaError(error, ctx);
   }
 
-  const raw = parseJsonObject(extractOutputText(response));
+  assertUsableProviderResponse(response, ctx);
+  const raw = parseJsonObject(extractOutputText(response), ctx);
+  if (raw == null) {
+    throw new DesignGenerationError("DESIGN_OUTPUT_PARSE_FAILED", {
+      stage: "structured_output_parse",
+      requestId: ctx.requestId,
+    });
+  }
   if (raw && typeof raw === "object" && !("version" in (raw as object))) {
     (raw as { version: number }).version = 1;
   }
 
-  const validated = validateDesignScene(raw);
-  return normalizeDesignScene(validated);
+  designLog("scene_schema_validation", ctx);
+  let validated: EditableDesignScene;
+  try {
+    validated = validateDesignScene(raw);
+  } catch (error) {
+    designFailLog("scene_schema_validation", ctx, "DESIGN_SCENE_INVALID", {
+      internalReason:
+        error instanceof DesignSceneValidationError
+          ? error.message.slice(0, 120)
+          : "SCHEMA_VALIDATION_FAILED",
+    });
+    throw new DesignGenerationError("DESIGN_SCENE_INVALID", {
+      stage: "scene_schema_validation",
+      requestId: ctx.requestId,
+      internalReason:
+        error instanceof DesignSceneValidationError
+          ? "SCENE_SCHEMA_VALIDATION_FAILED"
+          : "SCENE_VALIDATION_FAILED",
+    });
+  }
+
+  designLog("scene_normalization", ctx, {
+    inputObjectCount: validated.objects.length,
+  });
+  const diagnostics = normalizeDesignSceneWithDiagnostics(validated, {
+    requestId: ctx.requestId,
+    generationId: ctx.generationId,
+  });
+  designLog("scene_normalization", ctx, {
+    inputObjectCount: diagnostics.inputObjectCount,
+    validObjectCount: diagnostics.validObjectCount,
+    rejectedObjectCount: diagnostics.rejectedObjectCount,
+    rejectionReasons: diagnostics.rejections.map((r) => r.reason).slice(0, 12),
+  });
+
+  if (diagnostics.validObjectCount === 0) {
+    throw new DesignGenerationError("DESIGN_SCENE_INVALID", {
+      stage: "scene_normalization",
+      requestId: ctx.requestId,
+      internalReason: "ALL_GENERATED_OBJECTS_REJECTED",
+    });
+  }
+
+  return diagnostics.scene;
+}
+
+function assertNormalGenerationCreates(
+  scene: EditableDesignScene,
+  ctx: DesignLogCtx,
+): void {
+  designLog("operation_count", ctx, {
+    objectCount: scene.objects.length,
+    createCount: scene.objects.length,
+  });
+  if (scene.objects.length === 0) {
+    designFailLog("operation_count", ctx, "DESIGN_OPERATIONS_EMPTY");
+    throw new DesignGenerationError("DESIGN_OPERATIONS_EMPTY", {
+      stage: "operation_count",
+      requestId: ctx.requestId,
+    });
+  }
+
+  designLog("object_conversion_preflight", ctx, {
+    objectCount: scene.objects.length,
+    objectTypes: scene.objects.map((o) => o.type).slice(0, 24),
+  });
+  for (const obj of scene.objects) {
+    if (
+      !Number.isFinite(obj.left) ||
+      !Number.isFinite(obj.top) ||
+      !Number.isFinite(obj.width) ||
+      !Number.isFinite(obj.height) ||
+      obj.width <= 0 ||
+      obj.height <= 0
+    ) {
+      throw new DesignGenerationError("DESIGN_OBJECT_CONVERSION_FAILED", {
+        stage: "object_conversion_preflight",
+        requestId: ctx.requestId,
+        details: { objectId: obj.id, objectType: obj.type },
+      });
+    }
+  }
 }
 
 export async function generateEditableDesign(
   input: DesignGenerationInput,
 ): Promise<{ brief: DesignBrief; scene: EditableDesignScene }> {
+  const ctx: DesignLogCtx = {
+    requestId: input.requestId,
+    generationId: input.generationId,
+    projectId: input.projectId,
+  };
   const client = await createClient();
   const formats = input.formats ?? createDesignResponseFormats();
   const model = input.model ?? resolveOpenAiDesignModel();
-  const brief = await generateBrief(client, model, input, formats.brief);
+  const brief = await generateBrief(client, model, input, formats.brief, ctx);
   const scene = await generateSceneFromBrief(
     client,
     model,
     input,
     brief,
     formats.scene,
+    ctx,
   );
-  const sized = normalizeDesignScene({
-    ...scene,
-    canvas: {
-      ...scene.canvas,
-      width: Math.round(input.width),
-      height: Math.round(input.height),
-    },
+  const sizedCanvas = {
+    ...scene.canvas,
+    width: Math.round(input.width),
+    height: Math.round(input.height),
+  };
+  const sizedDiagnostics = normalizeDesignSceneWithDiagnostics(
+    { ...scene, canvas: sizedCanvas },
+    { requestId: ctx.requestId, generationId: ctx.generationId },
+  );
+  assertNormalGenerationCreates(sizedDiagnostics.scene, ctx);
+  return { brief, scene: sizedDiagnostics.scene };
+}
+
+function assertRefineOperations(
+  operations: DesignOperation[],
+  ctx: DesignLogCtx,
+): void {
+  designLog("operation_validation", ctx, {
+    operationCount: operations.length,
   });
-  return { brief, scene: sized };
+  const types = operations.map((o) => o.type);
+  const createCount = types.filter((t) => t === "create").length;
+  const updateCount = types.filter((t) => t === "update").length;
+  const deleteCount = types.filter((t) => t === "delete").length;
+  const reorderCount = types.filter((t) => t === "reorder").length;
+  designLog("operation_count", ctx, {
+    operationCount: operations.length,
+    operationTypes: [...new Set(types)],
+    createCount,
+    updateCount,
+    deleteCount,
+    reorderCount,
+  });
+
+  if (operations.length === 0) {
+    designFailLog("operation_count", ctx, "DESIGN_OPERATIONS_EMPTY");
+    throw new DesignGenerationError("DESIGN_OPERATIONS_EMPTY", {
+      stage: "operation_count",
+      requestId: ctx.requestId,
+    });
+  }
+}
+
+/**
+ * Normal (non-refine) generation must produce create operations only when
+ * operations are used. Scene-based generation uses objects as creates.
+ */
+export function assertNormalGenerationOperations(
+  operations: DesignOperation[],
+  ctx: DesignLogCtx,
+): void {
+  assertRefineOperations(operations, ctx);
+  const nonCreate = operations.filter((o) => o.type !== "create");
+  if (nonCreate.length === operations.length) {
+    designFailLog("operation_validation", ctx, "DESIGN_OPERATIONS_EMPTY", {
+      internalReason: "NORMAL_GENERATION_UPDATE_OR_DELETE_ONLY",
+    });
+    throw new DesignGenerationError("DESIGN_OPERATIONS_EMPTY", {
+      stage: "operation_validation",
+      requestId: ctx.requestId,
+      internalReason: "NORMAL_GENERATION_REQUIRES_CREATE",
+    });
+  }
+  const createCount = operations.filter((o) => o.type === "create").length;
+  if (createCount === 0) {
+    throw new DesignGenerationError("DESIGN_OPERATIONS_EMPTY", {
+      stage: "operation_count",
+      requestId: ctx.requestId,
+      internalReason: "NORMAL_GENERATION_REQUIRES_CREATE",
+    });
+  }
 }
 
 export async function refineEditableDesign(
   input: DesignRefineInput,
 ): Promise<{ operations: DesignOperation[] }> {
+  const ctx: DesignLogCtx = {
+    requestId: input.requestId,
+    generationId: input.generationId,
+    projectId: input.projectId,
+  };
   const client = await createClient();
   const formats = input.formats ?? createDesignResponseFormats();
   const model = input.model ?? resolveOpenAiDesignModel();
 
+  designLog("provider_request_start", ctx, { pass: "refine" });
   let response: OpenAI.Responses.Response;
   try {
     response = await client.responses.create({
@@ -301,18 +616,29 @@ export async function refineEditableDesign(
       text: { format: formats.operations },
     });
   } catch (error) {
-    mapProviderSchemaError(error);
+    mapProviderSchemaError(error, ctx);
   }
 
-  const raw = parseJsonObject(extractOutputText(response));
+  assertUsableProviderResponse(response, ctx);
+  const raw = parseJsonObject(extractOutputText(response), ctx);
+  if (raw == null) {
+    throw new DesignGenerationError("DESIGN_OUTPUT_PARSE_FAILED", {
+      stage: "structured_output_parse",
+      requestId: ctx.requestId,
+    });
+  }
   const parsed = designOperationsSchema.safeParse(raw);
   if (!parsed.success) {
-    throw new AppError(
-      "DESIGN_REFINE_INVALID",
-      "We couldn't create this design. Your credits were restored.",
-      422,
-    );
+    designFailLog("structured_output_parse", ctx, "DESIGN_OUTPUT_SCHEMA_INVALID", {
+      issueCount: parsed.error.issues.length,
+    });
+    throw new DesignGenerationError("DESIGN_OUTPUT_SCHEMA_INVALID", {
+      stage: "structured_output_parse",
+      requestId: ctx.requestId,
+      internalReason: "OPERATIONS_SCHEMA_MISMATCH",
+    });
   }
+  assertRefineOperations(parsed.data.operations, ctx);
   return parsed.data;
 }
 

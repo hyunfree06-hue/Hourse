@@ -6,6 +6,11 @@ export const editorConfig = {
   autosaveDebounceMs: 1500,
   thumbnailMinIntervalMs: 60_000,
   minAiRegionSize: 64,
+  /** Minimum Design generation region (editable scene). */
+  minDesignRegionWidth: 320,
+  minDesignRegionHeight: 240,
+  recommendedDesignRegionWidth: 600,
+  recommendedDesignRegionHeight: 300,
   maxZoom: 4,
   minZoom: 0.1,
   zoomStep: 0.1,

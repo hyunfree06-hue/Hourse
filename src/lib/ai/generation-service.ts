@@ -30,7 +30,7 @@ export async function failAndRefund(input: {
   errorMessage: string;
   requestId?: string;
   shouldRefund?: boolean;
-}) {
+}): Promise<{ refunded: boolean; creditBalance: number | null }> {
   await input.admin
     .from("ai_generations")
     .update({
@@ -42,15 +42,26 @@ export async function failAndRefund(input: {
     .eq("id", input.generationId);
 
   if (input.shouldRefund === false || input.amount <= 0) {
-    return;
+    const { data: profile } = await input.admin
+      .from("profiles")
+      .select("credit_balance")
+      .eq("id", input.userId)
+      .maybeSingle();
+    return {
+      refunded: false,
+      creditBalance: profile?.credit_balance ?? null,
+    };
   }
 
-  await refundCreditsAtomic({
+  const creditBalance = await refundCreditsAtomic({
     userId: input.userId,
     amount: input.amount,
     idempotencyKey: `generation_refund:${input.generationId}`,
     generationId: input.generationId,
+    requestId: input.requestId,
   });
+
+  return { refunded: true, creditBalance };
 }
 
 /**
