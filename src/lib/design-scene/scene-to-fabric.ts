@@ -280,11 +280,28 @@ export async function insertDesignSceneToCanvas(
 
 export function scaleSceneToRegion(
   scene: EditableDesignScene,
-  region: { width: number; height: number },
-): { scaleX: number; scaleY: number } {
+  region: { left: number; top: number; width: number; height: number },
+  paddingRatio = 0.06,
+): {
+  scaleX: number;
+  scaleY: number;
+  offsetLeft: number;
+  offsetTop: number;
+} {
+  const pad = Math.min(0.2, Math.max(0, paddingRatio));
+  const innerW = Math.max(1, region.width * (1 - 2 * pad));
+  const innerH = Math.max(1, region.height * (1 - 2 * pad));
+  const sceneW = Math.max(1, scene.canvas.width);
+  const sceneH = Math.max(1, scene.canvas.height);
+  const raw = Math.min(1, Math.min(innerW / sceneW, innerH / sceneH));
+  const scale = Number.isFinite(raw) && raw > 0 ? raw : 1;
+  const scaledW = sceneW * scale;
+  const scaledH = sceneH * scale;
   return {
-    scaleX: region.width / Math.max(1, scene.canvas.width),
-    scaleY: region.height / Math.max(1, scene.canvas.height),
+    scaleX: scale,
+    scaleY: scale,
+    offsetLeft: region.left + (region.width - scaledW) / 2,
+    offsetTop: region.top + (region.height - scaledH) / 2,
   };
 }
 

@@ -12,6 +12,7 @@ import {
   Lock,
 } from "lucide-react";
 import { useEditorStore } from "@/stores/editor-store";
+import { editorConfig } from "@/config/editor";
 import { designFonts } from "@/lib/design-scene/font-registry";
 import { LayersPanel } from "@/components/editor/panels/layers-panel";
 import { DimensionDraftInput } from "@/components/editor/properties/dimension-draft-input";
@@ -45,9 +46,20 @@ function getCanvasApi() {
           getWidth: () => number;
           getHeight: () => number;
         };
+        getArtboard?: () => { width: number; height: number };
       };
     }
   ).__hourse;
+}
+
+function getArtboardSize() {
+  const api = getCanvasApi();
+  const artboard = api?.getArtboard?.();
+  if (artboard) return artboard;
+  return {
+    width: api?.canvas.getWidth() ?? editorConfig.defaultCanvasWidth,
+    height: api?.canvas.getHeight() ?? editorConfig.defaultCanvasHeight,
+  };
 }
 
 function syncSelectionFromObject(obj: FabricObject) {
@@ -103,8 +115,8 @@ export function PropertiesPanel() {
     const obj = api.canvas.getActiveObject();
     if (!obj) return;
 
-    const canvasW = api.canvas.getWidth();
-    const canvasH = api.canvas.getHeight();
+    const canvasW = getArtboardSize().width;
+    const canvasH = getArtboardSize().height;
     const visual = getVisualSize(obj);
     const nextWidth = axis === "width" ? value : visual.width;
     const nextHeight = axis === "height" ? value : visual.height;
@@ -163,8 +175,8 @@ export function PropertiesPanel() {
       },
       DEFAULT_DESIGN_REGION.width,
       DEFAULT_DESIGN_REGION.height,
-      api.canvas.getWidth(),
-      api.canvas.getHeight(),
+      getArtboardSize().width,
+      getArtboardSize().height,
     );
     applyAiRegionSize(obj, placed);
     api.canvas.requestRenderAll();

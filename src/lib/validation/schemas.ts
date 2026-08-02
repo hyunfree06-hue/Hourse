@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_DESIGN_PROMPT_LENGTH } from "@/config/prompt";
 
 export const aiModeSchema = z.enum(["generate", "edit", "replace", "design"]);
 export const aiQualitySchema = z.enum(["fast", "standard", "high"]);
@@ -20,10 +21,21 @@ export const selectionDataSchema = z.object({
   fit: z.enum(["cover", "contain"]).default("cover"),
 });
 
+export const designPromptSchema = z
+  .string()
+  .min(1, "Prompt is required")
+  .max(
+    MAX_DESIGN_PROMPT_LENGTH,
+    `Maximum ${MAX_DESIGN_PROMPT_LENGTH.toLocaleString("en-US")} characters`,
+  )
+  .refine((value) => value.trim().length > 0, {
+    message: "Prompt is required",
+  });
+
 export const createGenerationSchema = z.object({
   projectId: z.string().uuid(),
-  prompt: z.string().trim().min(1).max(2000),
-  negativePrompt: z.string().trim().max(1000).optional(),
+  prompt: designPromptSchema,
+  negativePrompt: z.string().max(1000).optional(),
   /** Optional for design mode — server orchestrates providers internally. */
   provider: aiProviderSchema.optional().default("openai"),
   quality: aiQualitySchema.default("standard"),
@@ -35,7 +47,7 @@ export const createGenerationSchema = z.object({
   /** When refining an existing selection */
   selectedObjectIds: z.array(z.string().min(1).max(64)).max(40).optional(),
   selectedObjects: z.array(z.unknown()).max(40).optional(),
-  nearbySummary: z.string().max(2000).optional(),
+  nearbySummary: z.string().max(MAX_DESIGN_PROMPT_LENGTH).optional(),
 });
 
 export const saveProjectSchema = z

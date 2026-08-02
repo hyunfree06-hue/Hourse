@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { clampZoom } from "@/lib/canvas/viewport";
 
 export type EditorTool =
   | "select"
@@ -80,7 +81,7 @@ export const useEditorStore = create<EditorStore>((set) => ({
   backgroundColor: "#ffffff",
   isMobilePreview: false,
   setTool: (tool) => set({ tool }),
-  setZoom: (zoom) => set({ zoom }),
+  setZoom: (zoom) => set({ zoom: clampZoom(zoom) }),
   setSaveStatus: (saveStatus) => set({ saveStatus }),
   setSelected: (selected) => set({ selected }),
   setAiRegion: (aiRegion) => set({ aiRegion }),

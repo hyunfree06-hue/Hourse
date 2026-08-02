@@ -21,6 +21,8 @@ type HourseWindow = {
     loadFromJSON: (j: unknown) => Promise<unknown>;
     requestRenderAll: () => void;
   };
+  getArtboard?: () => { width: number; height: number; backgroundColor: string };
+  artboard?: { width: number; height: number; backgroundColor: string };
 };
 
 function getHourseApi(): HourseWindow | undefined {
@@ -61,14 +63,16 @@ function buildSavePayload(api: HourseWindow, updatedAt: string) {
     }),
   ) as Record<string, unknown>;
 
+  const artboard = api.getArtboard?.() ?? api.artboard;
   return {
     canvasJson: safeJson,
-    canvasWidth: api.canvas.getWidth(),
-    canvasHeight: api.canvas.getHeight(),
+    canvasWidth: artboard?.width ?? api.canvas.getWidth(),
+    canvasHeight: artboard?.height ?? api.canvas.getHeight(),
     backgroundColor:
-      typeof api.canvas.backgroundColor === "string"
+      artboard?.backgroundColor ??
+      (typeof api.canvas.backgroundColor === "string"
         ? api.canvas.backgroundColor
-        : "#ffffff",
+        : "#ffffff"),
     expectedUpdatedAt: updatedAt,
     updatedAt,
   };
@@ -194,10 +198,33 @@ export function useAutosave({ projectId, initialUpdatedAt }: Props) {
         const now = Date.now();
         if (now - lastThumbRef.current > editorConfig.thumbnailMinIntervalMs) {
           lastThumbRef.current = now;
-          const dataUrl = api.canvas.toDataURL({
-            format: "png",
-            multiplier: 0.25,
-          });
+          const board = api.getArtboard?.() ??
+            api.artboard ?? {
+              width: api.canvas.getWidth(),
+              height: api.canvas.getHeight(),
+            };
+          const canvasWithVpt = api.canvas as HourseWindow["canvas"] & {
+            viewportTransform?: number[] | null;
+            setViewportTransform?: (vpt: number[]) => void;
+          };
+          const prevVpt = canvasWithVpt.viewportTransform
+            ? [...canvasWithVpt.viewportTransform]
+            : [1, 0, 0, 1, 0, 0];
+          canvasWithVpt.setViewportTransform?.([1, 0, 0, 1, 0, 0]);
+          let dataUrl: string;
+          try {
+            dataUrl = api.canvas.toDataURL({
+              format: "png",
+              multiplier: 0.25,
+              left: 0,
+              top: 0,
+              width: board.width,
+              height: board.height,
+            });
+          } finally {
+            canvasWithVpt.setViewportTransform?.(prevVpt);
+            api.canvas.requestRenderAll();
+          }
           const blob = await (await fetch(dataUrl)).blob();
           const form = new FormData();
           form.append("file", blob, "thumb.png");

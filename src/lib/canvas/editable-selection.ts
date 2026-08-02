@@ -39,11 +39,12 @@ export function isEditableDesignObject(
   const name = readProp(object, "name");
 
   if (objectRole === "ai-region") return false;
+  if (objectRole === "artboard") return false;
   if (sourceType === "ai-region") return false;
   if (sourceType === "selection-overlay") return false;
   if (isTemporary === true) return false;
   if (excludeFromExport === true) return false;
-  if (name === "AI region") return false;
+  if (name === "AI region" || name === "Artboard") return false;
   if (objectId == null || objectId === "") return false;
 
   return true;

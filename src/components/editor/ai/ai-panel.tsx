@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { nanoid } from "nanoid";
 import { toast } from "sonner";
 import { X } from "lucide-react";
@@ -13,6 +13,11 @@ import {
   QUALITY_LABELS,
   type AiQuality,
 } from "@/config/credits";
+import {
+  DESIGN_PROMPT_LIMIT_MESSAGE,
+  DESIGN_PROMPT_WARN_LENGTH,
+  MAX_DESIGN_PROMPT_LENGTH,
+} from "@/config/prompt";
 import { useEditorStore } from "@/stores/editor-store";
 import { aspectRatioLabel } from "@/lib/utils/geometry";
 import { createObjectId } from "@/lib/canvas/custom-properties";
@@ -126,14 +131,33 @@ type PendingApply = {
 function getHourseApi(): {
   canvas: Canvas;
   history?: { save: () => void };
+  revealObjects?: (objects: FabricObject[]) => number;
+  fitGeneration?: (generationId: string) => number;
+  syncZoom?: () => void;
 } | null {
   return (
     (
       window as unknown as {
-        __hourse?: { canvas: Canvas; history?: { save: () => void } };
+        __hourse?: {
+          canvas: Canvas;
+          history?: { save: () => void };
+          revealObjects?: (objects: FabricObject[]) => number;
+          fitGeneration?: (generationId: string) => number;
+          syncZoom?: () => void;
+        };
       }
     ).__hourse ?? null
   );
+}
+
+function clampPrompt(value: string): { text: string; truncated: boolean } {
+  if (value.length <= MAX_DESIGN_PROMPT_LENGTH) {
+    return { text: value, truncated: false };
+  }
+  return {
+    text: value.slice(0, MAX_DESIGN_PROMPT_LENGTH),
+    truncated: true,
+  };
 }
 
 export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
@@ -147,22 +171,34 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
   const selected = useEditorStore((s) => s.selected);
 
   const [prompt, setPrompt] = useState("");
+  const [promptLimitMessage, setPromptLimitMessage] = useState<string | null>(
+    null,
+  );
   const [quality, setQuality] = useState<AiQuality>("standard");
   const [loading, setLoading] = useState(false);
   const [applying, setApplying] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingApply, setPendingApply] = useState<PendingApply | null>(null);
+  const [lastGenerationId, setLastGenerationId] = useState<string | null>(null);
   const [selectionEpoch, setSelectionEpoch] = useState(0);
+  const promptRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     const bump = () => setSelectionEpoch((n) => n + 1);
     window.addEventListener("hourse:dirty", bump);
-    window.addEventListener("selection:created", bump as EventListener);
     return () => {
       window.removeEventListener("hourse:dirty", bump);
     };
   }, []);
+
+  useEffect(() => {
+    const el = promptRef.current;
+    if (!el) return;
+    el.style.height = "0px";
+    const next = Math.min(220, Math.max(80, el.scrollHeight));
+    el.style.height = `${next}px`;
+  }, [prompt, aiPanelOpen]);
 
   const editableSelection = useMemo(() => {
     void selected;
@@ -206,7 +242,7 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
     );
 
     const designBlockId = createObjectId();
-    const { scaleX, scaleY } = scaleSceneToRegion(scene, selection);
+    const fit = scaleSceneToRegion(scene, selection);
     const imageUrlById = new Map<string, string>();
     if (imageAssets) {
       for (const [id, asset] of Object.entries(imageAssets)) {
@@ -221,10 +257,10 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
       api.canvas,
       scene,
       {
-        offsetLeft: selection.left,
-        offsetTop: selection.top,
-        scaleX,
-        scaleY,
+        offsetLeft: fit.offsetLeft,
+        offsetTop: fit.offsetTop,
+        scaleX: fit.scaleX,
+        scaleY: fit.scaleY,
         generationId,
         designBlockId,
       },
@@ -260,6 +296,10 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
       object.setCoords();
     }
 
+    api.revealObjects?.(fabricObjects);
+    api.syncZoom?.();
+    setLastGenerationId(generationId);
+
     api.history?.save();
     api.canvas.requestRenderAll();
     window.dispatchEvent(new CustomEvent("hourse:dirty"));
@@ -283,6 +323,18 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
         });
         api.history?.save();
         window.dispatchEvent(new CustomEvent("hourse:dirty"));
+        const created = api.canvas
+          .getObjects()
+          .filter(
+            (obj) =>
+              (obj as FabricObject & { generationId?: string }).generationId ===
+              pending.generationId,
+          );
+        if (created.length) {
+          api.revealObjects?.(created);
+          api.syncZoom?.();
+        }
+        setLastGenerationId(pending.generationId);
         return;
       }
 
@@ -358,6 +410,15 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
     const api = getHourseApi();
     const selectedObjects = api ? getEditableSelection(api.canvas) : [];
     const refining = selectedObjects.length > 0;
+
+    if (prompt.length > MAX_DESIGN_PROMPT_LENGTH) {
+      setPromptLimitMessage(DESIGN_PROMPT_LIMIT_MESSAGE);
+      return;
+    }
+    if (!prompt.trim()) {
+      setError("Enter a design prompt.");
+      return;
+    }
 
     if (!refining && !aiRegion) {
       setError("Draw an area on the canvas first.");
@@ -614,13 +675,68 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
           </Label>
           <Textarea
             id="prompt"
-            className="mt-1 resize-none text-sm"
+            ref={promptRef}
+            className="mt-1 max-h-[220px] min-h-[80px] resize-none overflow-y-auto text-sm"
             rows={3}
             value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
+            onChange={(e) => {
+              const next = clampPrompt(e.target.value);
+              setPrompt(next.text);
+              setPromptLimitMessage(
+                next.truncated ? DESIGN_PROMPT_LIMIT_MESSAGE : null,
+              );
+            }}
+            onPaste={(e) => {
+              const pasted = e.clipboardData.getData("text");
+              if (!pasted) return;
+              const el = e.currentTarget;
+              const start = el.selectionStart ?? prompt.length;
+              const end = el.selectionEnd ?? prompt.length;
+              const merged =
+                prompt.slice(0, start) + pasted + prompt.slice(end);
+              if (merged.length > MAX_DESIGN_PROMPT_LENGTH) {
+                e.preventDefault();
+                const clipped = clampPrompt(merged);
+                setPrompt(clipped.text);
+                setPromptLimitMessage(DESIGN_PROMPT_LIMIT_MESSAGE);
+              }
+            }}
+            onKeyDown={(e) => {
+              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                e.preventDefault();
+                e.stopPropagation();
+                if (!loading && prompt.trim()) {
+                  void handleGenerate();
+                }
+              }
+            }}
             placeholder="Describe the design you want to create…"
-            maxLength={2000}
+            maxLength={MAX_DESIGN_PROMPT_LENGTH}
           />
+          <div className="mt-1 flex items-start justify-between gap-2">
+            <p
+              className={`text-[10px] ${
+                promptLimitMessage
+                  ? "text-amber-600"
+                  : "text-transparent"
+              }`}
+              aria-live="polite"
+            >
+              {promptLimitMessage ?? DESIGN_PROMPT_LIMIT_MESSAGE}
+            </p>
+            <p
+              className={`text-right text-[10px] tabular-nums ${
+                prompt.length >= MAX_DESIGN_PROMPT_LENGTH
+                  ? "font-medium text-amber-700"
+                  : prompt.length >= DESIGN_PROMPT_WARN_LENGTH
+                    ? "text-amber-600"
+                    : "text-neutral-400"
+              }`}
+            >
+              {prompt.length.toLocaleString("en-US")} /{" "}
+              {MAX_DESIGN_PROMPT_LENGTH.toLocaleString("en-US")}
+            </p>
+          </div>
         </div>
 
         <div className="flex flex-wrap gap-1.5">
@@ -630,9 +746,16 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
               type="button"
               className="rounded-full border border-[rgba(17,17,19,0.08)] px-2.5 py-1 text-[11px] font-medium text-neutral-600 transition-colors hover:border-[#635BFF]/30 hover:text-[#635BFF]"
               onClick={() =>
-                setPrompt((prev) =>
-                  prev ? `${prev}, ${chip.toLowerCase()}` : chip,
-                )
+                setPrompt((prev) => {
+                  const next = prev
+                    ? `${prev}, ${chip.toLowerCase()}`
+                    : chip;
+                  const clipped = clampPrompt(next);
+                  if (clipped.truncated) {
+                    setPromptLimitMessage(DESIGN_PROMPT_LIMIT_MESSAGE);
+                  }
+                  return clipped.text;
+                })
               }
             >
               {chip}
@@ -689,11 +812,28 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
           </div>
         )}
 
+        {lastGenerationId && !pendingApply ? (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 w-full text-[11px]"
+            onClick={() => {
+              const api = getHourseApi();
+              if (!api || !lastGenerationId) return;
+              api.fitGeneration?.(lastGenerationId);
+              api.syncZoom?.();
+            }}
+          >
+            Show generated design
+          </Button>
+        ) : null}
+
         <Button
           className="w-full bg-[#635BFF] text-white hover:bg-[#5851db]"
           loading={loading}
           disabled={
             !prompt.trim() ||
+            prompt.length > MAX_DESIGN_PROMPT_LENGTH ||
             !availability.openai ||
             (!isRefine && (!aiRegion || regionTooSmall))
           }

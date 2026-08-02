@@ -9,7 +9,6 @@ import {
   IText,
   FabricObject,
   ActiveSelection,
-  Point,
 } from "fabric";
 import { editorConfig } from "@/config/editor";
 import {
@@ -26,6 +25,26 @@ import {
   isAiRegionFabricObject,
   normalizeFabricObjectScale,
 } from "@/lib/design-scene/region";
+import {
+  clampZoom,
+  fitAllObjectsInView,
+  fitArtboardInView,
+  fitDesignFocusInView,
+  fitGenerationInView,
+  fitSelectionInView,
+  getEditorFitPadding,
+  getViewportTransform,
+  panCanvasBy,
+  resetViewport,
+  revealObjectsInView,
+  wheelPanDelta,
+  zoomCanvasAtCenter,
+  zoomCanvasToPoint,
+} from "@/lib/canvas/viewport";
+import {
+  loadStoredViewport,
+  saveStoredViewport,
+} from "@/lib/canvas/viewport-storage";
 
 FabricObject.customProperties = [...FABRIC_CUSTOM_KEYS];
 
@@ -60,6 +79,14 @@ export function FabricCanvas({
   const panningRef = useRef(false);
   const lastPosRef = useRef({ x: 0, y: 0 });
   const clipboardRef = useRef<FabricObject | null>(null);
+  const viewportSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const artboardRef = useRef({
+    width,
+    height,
+    backgroundColor,
+  });
 
   const tool = useEditorStore((s) => s.tool);
   const setZoom = useEditorStore((s) => s.setZoom);
@@ -75,18 +102,140 @@ export function FabricCanvas({
   }, [tool]);
 
   useEffect(() => {
-    if (!canvasElRef.current || canvasRef.current) return;
+    artboardRef.current = { width, height, backgroundColor };
+  }, [width, height, backgroundColor]);
+
+  useEffect(() => {
+    if (!canvasElRef.current || !containerRef.current || canvasRef.current) return;
     let disposed = false;
 
+    const container = containerRef.current;
+    const viewW = Math.max(1, container.clientWidth || width);
+    const viewH = Math.max(1, container.clientHeight || height);
+
     const canvas = new Canvas(canvasElRef.current, {
-      width,
-      height,
-      backgroundColor,
+      width: viewW,
+      height: viewH,
+      backgroundColor: editorConfig.workspaceBackground,
       preserveObjectStacking: true,
       selection: true,
+      stopContextMenu: true,
+      fireRightClick: true,
+      fireMiddleClick: true,
     });
     canvasRef.current = canvas;
     historyRef.current.attach(canvas);
+
+    const syncZoom = () => {
+      setZoom(clampZoom(canvas.getZoom()));
+    };
+
+    const persistViewport = () => {
+      if (viewportSaveTimerRef.current) {
+        clearTimeout(viewportSaveTimerRef.current);
+      }
+      viewportSaveTimerRef.current = setTimeout(() => {
+        saveStoredViewport(projectId, {
+          zoom: clampZoom(canvas.getZoom()),
+          viewportTransform: getViewportTransform(canvas),
+        });
+      }, 200);
+    };
+
+    const applyZoomAndPersist = (zoom: number) => {
+      setZoom(zoom);
+      persistViewport();
+      return zoom;
+    };
+
+    const fitPad = () =>
+      getEditorFitPadding({
+        aiPanelOpen: useEditorStore.getState().aiPanelOpen,
+      });
+
+    const endPanGesture = () => {
+      const wasPanning = panningRef.current;
+      panningRef.current = false;
+      canvas.selection = toolRef.current === "select" && !spacePanRef.current;
+      canvas.skipTargetFind =
+        spacePanRef.current ||
+        (toolRef.current !== "select" && toolRef.current !== "hand");
+      canvas.setCursor(
+        spacePanRef.current || toolRef.current === "hand"
+          ? "grab"
+          : toolRef.current === "select"
+            ? "default"
+            : "crosshair",
+      );
+      if (wasPanning) persistViewport();
+    };
+
+    const clearSpacePan = () => {
+      spacePanRef.current = false;
+      endPanGesture();
+    };
+
+    const ensureArtboard = () => {
+      const existing = canvas.getObjects().find((obj) => {
+        const role = (obj as FabricObject & { objectRole?: string }).objectRole;
+        return role === "artboard";
+      }) as Rect | undefined;
+
+      const board =
+        existing ??
+        new Rect(
+          withCustomDefaults({
+            left: 0,
+            top: 0,
+            width: artboardRef.current.width,
+            height: artboardRef.current.height,
+            fill: artboardRef.current.backgroundColor,
+            stroke: "rgba(17,17,19,0.10)",
+            strokeWidth: 1,
+            selectable: false,
+            evented: false,
+            hoverCursor: "default",
+            objectRole: "artboard",
+            name: "Artboard",
+            excludeFromExport: true,
+            isTemporary: true,
+          }),
+        );
+
+      board.set({
+        left: 0,
+        top: 0,
+        scaleX: 1,
+        scaleY: 1,
+        width: artboardRef.current.width,
+        height: artboardRef.current.height,
+        fill: artboardRef.current.backgroundColor,
+        stroke: "rgba(17,17,19,0.10)",
+        strokeWidth: 1,
+        selectable: false,
+        evented: false,
+        objectRole: "artboard",
+        name: "Artboard",
+        excludeFromExport: true,
+        isTemporary: true,
+      });
+      board.setCoords();
+
+      if (!existing) {
+        canvas.add(board);
+      }
+      canvas.sendObjectToBack(board);
+    };
+
+    const resizeToContainer = () => {
+      if (!containerRef.current) return;
+      const nextW = Math.max(1, containerRef.current.clientWidth);
+      const nextH = Math.max(1, containerRef.current.clientHeight);
+      if (nextW === canvas.getWidth() && nextH === canvas.getHeight()) return;
+      canvas.setDimensions({ width: nextW, height: nextH });
+      canvas.requestRenderAll();
+      syncZoom();
+    };
 
     const syncSelection = () => {
       const active = canvas.getActiveObject();
@@ -210,11 +359,15 @@ export function FabricCanvas({
 
     const onMouseDown = (opt: { e: Event; target?: FabricObject | null }) => {
       const currentTool = toolRef.current;
-      if (spacePanRef.current || currentTool === "hand") {
+      const e = opt.e as MouseEvent;
+      const isMiddle = e.button === 1;
+      if (isMiddle || spacePanRef.current || currentTool === "hand") {
         panningRef.current = true;
         canvas.selection = false;
-        const e = opt.e as MouseEvent;
+        canvas.skipTargetFind = true;
+        canvas.setCursor("grabbing");
         lastPosRef.current = { x: e.clientX, y: e.clientY };
+        e.preventDefault();
         return;
       }
 
@@ -322,12 +475,11 @@ export function FabricCanvas({
     const onMouseMove = (opt: { e: Event }) => {
       if (panningRef.current) {
         const e = opt.e as MouseEvent;
-        const vpt = canvas.viewportTransform;
-        if (!vpt) return;
-        vpt[4] += e.clientX - lastPosRef.current.x;
-        vpt[5] += e.clientY - lastPosRef.current.y;
-        canvas.requestRenderAll();
+        const dx = e.clientX - lastPosRef.current.x;
+        const dy = e.clientY - lastPosRef.current.y;
+        panCanvasBy(canvas, dx, dy);
         lastPosRef.current = { x: e.clientX, y: e.clientY };
+        // Viewport-only — never mark project dirty.
         return;
       }
 
@@ -368,8 +520,7 @@ export function FabricCanvas({
 
     const onMouseUp = (opt?: { e?: Event }) => {
       if (panningRef.current) {
-        panningRef.current = false;
-        canvas.selection = toolRef.current === "select";
+        endPanGesture();
         return;
       }
       const draw = drawingRef.current;
@@ -383,8 +534,8 @@ export function FabricCanvas({
             startY: draw.startY,
             endX: pointer.x,
             endY: pointer.y,
-            canvasWidth: canvas.getWidth(),
-            canvasHeight: canvas.getHeight(),
+            canvasWidth: artboardRef.current.width,
+            canvasHeight: artboardRef.current.height,
           });
           applyAiRegionSize(draw.object, finalized);
           setAiRegion(finalized);
@@ -410,21 +561,52 @@ export function FabricCanvas({
 
     const onWheel = (opt: { e: Event }) => {
       const e = opt.e as WheelEvent;
-      if (!e.ctrlKey && !e.metaKey) return;
       e.preventDefault();
       e.stopPropagation();
-      let zoom = canvas.getZoom();
-      zoom *= 0.999 ** e.deltaY;
-      zoom = Math.min(editorConfig.maxZoom, Math.max(editorConfig.minZoom, zoom));
-      canvas.zoomToPoint(new Point(e.offsetX, e.offsetY), zoom);
-      setZoom(zoom);
+
+      if (e.ctrlKey || e.metaKey) {
+        const factor = Math.pow(
+          0.999,
+          Math.max(-160, Math.min(160, e.deltaY)),
+        );
+        const next = clampZoom(canvas.getZoom() * factor);
+        zoomCanvasToPoint(
+          canvas,
+          { x: e.offsetX, y: e.offsetY },
+          next,
+        );
+        syncZoom();
+        persistViewport();
+        return;
+      }
+
+      const { dx, dy } = wheelPanDelta(e);
+      panCanvasBy(canvas, dx, dy);
+      persistViewport();
     };
     canvas.on("mouse:wheel", onWheel);
+
+    const onDomMiddleDown = (e: MouseEvent) => {
+      if (e.button === 1) {
+        e.preventDefault();
+      }
+    };
+    canvas.getElement().addEventListener("mousedown", onDomMiddleDown);
+    canvas.getElement().addEventListener("auxclick", onDomMiddleDown);
 
     const load = async () => {
       try {
         if (initialJson) {
           await canvas.loadFromJSON(initialJson);
+          // Drop any persisted artboard overlays — we recreate a live one.
+          for (const obj of [...canvas.getObjects()]) {
+            const role = (obj as FabricObject & { objectRole?: string })
+              .objectRole;
+            const name = (obj as FabricObject & { name?: string }).name;
+            if (role === "artboard" || name === "Artboard") {
+              canvas.remove(obj);
+            }
+          }
           const { rehydrateAssetImages } = await import(
             "@/lib/canvas/load-fabric-image"
           );
@@ -441,7 +623,17 @@ export function FabricCanvas({
             },
           );
         }
-        canvas.backgroundColor = backgroundColor;
+        canvas.backgroundColor = editorConfig.workspaceBackground;
+        ensureArtboard();
+        resizeToContainer();
+        const stored = loadStoredViewport(projectId);
+        if (stored) {
+          canvas.setViewportTransform(stored.viewportTransform);
+          setZoom(clampZoom(stored.zoom));
+        } else {
+          const z = fitArtboardInView(canvas, artboardRef.current, fitPad());
+          setZoom(z);
+        }
         canvas.requestRenderAll();
         historyRef.current.reset(JSON.stringify(canvas.toJSON()));
         onCanvasReady?.(canvas);
@@ -469,7 +661,12 @@ export function FabricCanvas({
 
       const meta = e.metaKey || e.ctrlKey;
       if (e.code === "Space") {
-        spacePanRef.current = true;
+        if (!spacePanRef.current) {
+          spacePanRef.current = true;
+          canvas.selection = false;
+          canvas.skipTargetFind = true;
+          canvas.setCursor(panningRef.current ? "grabbing" : "grab");
+        }
         e.preventDefault();
       }
       if (e.key === "Escape") {
@@ -478,7 +675,11 @@ export function FabricCanvas({
         canvas.requestRenderAll();
       }
       if (e.key === "Delete" || e.key === "Backspace") {
-        const active = canvas.getActiveObjects();
+        const active = canvas.getActiveObjects().filter((obj) => {
+          const role = (obj as FabricObject & { objectRole?: string })
+            .objectRole;
+          return role !== "artboard";
+        });
         active.forEach((obj) => canvas.remove(obj));
         canvas.discardActiveObject();
         canvas.requestRenderAll();
@@ -496,6 +697,9 @@ export function FabricCanvas({
       if (meta && e.key.toLowerCase() === "c") {
         const active = canvas.getActiveObject();
         if (active) {
+          const role = (active as FabricObject & { objectRole?: string })
+            .objectRole;
+          if (role === "artboard") return;
           void active.clone().then((cloned) => {
             clipboardRef.current = cloned;
           });
@@ -526,6 +730,9 @@ export function FabricCanvas({
         e.preventDefault();
         const active = canvas.getActiveObject();
         if (!active) return;
+        const role = (active as FabricObject & { objectRole?: string })
+          .objectRole;
+        if (role === "artboard") return;
         void active.clone().then((cloned) => {
           cloned.set({
             left: (cloned.left ?? 0) + 20,
@@ -544,38 +751,123 @@ export function FabricCanvas({
         window.dispatchEvent(new CustomEvent("hourse:force-save"));
       }
       if (e.key === "+" || e.key === "=") {
-        const zoom = Math.min(editorConfig.maxZoom, canvas.getZoom() + editorConfig.zoomStep);
-        canvas.setZoom(zoom);
-        setZoom(zoom);
+        e.preventDefault();
+        applyZoomAndPersist(
+          zoomCanvasAtCenter(
+            canvas,
+            canvas.getZoom() + editorConfig.zoomStep,
+          ),
+        );
       }
-      if (e.key === "-") {
-        const zoom = Math.max(editorConfig.minZoom, canvas.getZoom() - editorConfig.zoomStep);
-        canvas.setZoom(zoom);
-        setZoom(zoom);
+      if (e.key === "-" || e.key === "_") {
+        e.preventDefault();
+        applyZoomAndPersist(
+          zoomCanvasAtCenter(
+            canvas,
+            canvas.getZoom() - editorConfig.zoomStep,
+          ),
+        );
       }
-      if (e.key === "0") {
-        fitToScreen(canvas, containerRef.current);
-        setZoom(canvas.getZoom());
+      if (e.key === "0" && !meta) {
+        e.preventDefault();
+        applyZoomAndPersist(zoomCanvasAtCenter(canvas, 1));
+      }
+      if (e.key === "1" && !meta) {
+        e.preventDefault();
+        applyZoomAndPersist(fitAllObjectsInView(canvas, fitPad()));
+      }
+      if (e.key === "2" && !meta) {
+        e.preventDefault();
+        applyZoomAndPersist(fitSelectionInView(canvas, fitPad()));
+      }
+      if ((e.key === "f" || e.key === "F") && !meta) {
+        e.preventDefault();
+        applyZoomAndPersist(fitDesignFocusInView(canvas, fitPad()));
       }
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
-      if (e.code === "Space") spacePanRef.current = false;
+      if (e.code === "Space") {
+        clearSpacePan();
+      }
+    };
+
+    const onWindowBlur = () => {
+      clearSpacePan();
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState !== "visible") {
+        clearSpacePan();
+      }
+    };
+
+    const onWindowPointerUp = () => {
+      if (panningRef.current) {
+        endPanGesture();
+      }
     };
 
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onWindowBlur);
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pointerup", onWindowPointerUp);
+    window.addEventListener("mouseup", onWindowPointerUp);
 
-    (window as unknown as { __hourse?: { canvas: Canvas; history: typeof historyRef.current; projectId: string } }).__hourse = {
+    const resizeObserver = new ResizeObserver(() => {
+      resizeToContainer();
+    });
+    resizeObserver.observe(container);
+
+    const hourseApi = {
       canvas,
       history: historyRef.current,
       projectId,
+      artboard: artboardRef.current,
+      getArtboard: () => ({ ...artboardRef.current }),
+      syncZoom,
+      fitAll: () =>
+        applyZoomAndPersist(fitAllObjectsInView(canvas, fitPad())),
+      fitSelection: () =>
+        applyZoomAndPersist(fitSelectionInView(canvas, fitPad())),
+      fitDesign: () =>
+        applyZoomAndPersist(fitDesignFocusInView(canvas, fitPad())),
+      fitArtboard: () =>
+        applyZoomAndPersist(
+          fitArtboardInView(canvas, artboardRef.current, fitPad()),
+        ),
+      resetViewport: () => applyZoomAndPersist(resetViewport(canvas)),
+      zoomTo: (next: number, point?: { x: number; y: number }) => {
+        const zoom = point
+          ? zoomCanvasToPoint(canvas, point, next)
+          : zoomCanvasAtCenter(canvas, next);
+        return applyZoomAndPersist(zoom);
+      },
+      revealObjects: (objects: FabricObject[]) =>
+        applyZoomAndPersist(revealObjectsInView(canvas, objects, fitPad())),
+      fitGeneration: (generationId: string) =>
+        applyZoomAndPersist(
+          fitGenerationInView(canvas, generationId, fitPad()),
+        ),
     };
+    (window as unknown as { __hourse?: typeof hourseApi }).__hourse = hourseApi;
 
     return () => {
       disposed = true;
+      if (viewportSaveTimerRef.current) {
+        clearTimeout(viewportSaveTimerRef.current);
+      }
+      clearSpacePan();
+      resizeObserver.disconnect();
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onWindowBlur);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pointerup", onWindowPointerUp);
+      window.removeEventListener("mouseup", onWindowPointerUp);
+      canvas.getElement().removeEventListener("mousedown", onDomMiddleDown);
+      canvas.getElement().removeEventListener("auxclick", onDomMiddleDown);
       canvas.off("selection:created", syncSelection);
       canvas.off("selection:updated", syncSelection);
       canvas.off("object:modified", onModified);
@@ -608,33 +900,29 @@ export function FabricCanvas({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    canvas.backgroundColor = backgroundColor;
+    canvas.backgroundColor = editorConfig.workspaceBackground;
+    artboardRef.current.backgroundColor = backgroundColor;
+    const board = canvas.getObjects().find((obj) => {
+      const role = (obj as FabricObject & { objectRole?: string }).objectRole;
+      return role === "artboard";
+    });
+    if (board) {
+      board.set({ fill: backgroundColor });
+      board.setCoords();
+    }
     setBackgroundColor(backgroundColor);
     canvas.requestRenderAll();
   }, [backgroundColor, setBackgroundColor]);
 
   return (
-    <div ref={containerRef} className="relative h-full w-full overflow-hidden bg-[#F5F5F5]">
-      <canvas ref={canvasElRef} className="block" />
+    <div
+      ref={containerRef}
+      className="relative h-full w-full overflow-hidden bg-[#E8E8EC]"
+      style={{ touchAction: "none" }}
+    >
+      <canvas ref={canvasElRef} className="block h-full w-full" />
     </div>
   );
-}
-
-function fitToScreen(canvas: Canvas, container: HTMLDivElement | null) {
-  if (!container) return;
-  const { clientWidth, clientHeight } = container;
-  const zoom = Math.min(
-    clientWidth / canvas.getWidth(),
-    clientHeight / canvas.getHeight(),
-    1,
-  );
-  canvas.setZoom(zoom);
-  const vpt = canvas.viewportTransform;
-  if (vpt) {
-    vpt[4] = (clientWidth - canvas.getWidth() * zoom) / 2;
-    vpt[5] = (clientHeight - canvas.getHeight() * zoom) / 2;
-  }
-  canvas.requestRenderAll();
 }
 
 export async function addImageToCanvas(

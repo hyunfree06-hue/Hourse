@@ -425,7 +425,9 @@ export function sanitizeCanvasJsonForSave(json: unknown): unknown {
     const role = obj.objectRole;
     const name = obj.name;
     if (role === "ai-region") return false;
+    if (role === "artboard") return false;
     if (name === "AI region") return false;
+    if (name === "Artboard") return false;
     return true;
   });
   for (const obj of clone.objects) {

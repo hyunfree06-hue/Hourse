@@ -1,3 +1,7 @@
+import {
+  MAX_DESIGN_PROMPT_LENGTH,
+} from "@/config/prompt";
+
 export const editorConfig = {
   defaultCanvasWidth: 1920,
   defaultCanvasHeight: 1080,
@@ -14,10 +18,15 @@ export const editorConfig = {
   minDesignRegionHeight: 240,
   recommendedDesignRegionWidth: 600,
   recommendedDesignRegionHeight: 300,
-  maxZoom: 4,
-  minZoom: 0.1,
+  /** Zoom range: 5% … 800% */
+  maxZoom: 8,
+  minZoom: 0.05,
   zoomStep: 0.1,
   gridSize: 8,
+  workspaceBackground: "#E8E8EC",
+  /** Max characters for Design / AI prompts (client + server). */
+  promptMaxLength: MAX_DESIGN_PROMPT_LENGTH,
+  viewportStoragePrefix: "hourse:viewport:",
   exportFilePrefix: "hourse-project",
   customObjectProperties: [
     "objectId",
@@ -66,5 +75,5 @@ export const aiRuntimeConfig = {
   maxPollAttempts: Number(process.env.AI_MAX_POLL_ATTEMPTS ?? 60),
   maxDownloadBytes: 20 * 1024 * 1024,
   rateLimitPerMinute: 10,
-  promptMaxLength: 2000,
+  promptMaxLength: editorConfig.promptMaxLength,
 };
