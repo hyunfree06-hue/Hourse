@@ -3,10 +3,13 @@ export const editorConfig = {
   defaultCanvasHeight: 1080,
   defaultBackgroundColor: "#ffffff",
   defaultProjectName: "Untitled project",
-  autosaveDebounceMs: 1500,
+  autosaveDebounceMs: 500,
   thumbnailMinIntervalMs: 60_000,
-  minAiRegionSize: 64,
-  /** Minimum Design generation region (editable scene). */
+  /**
+   * @deprecated Use DEFAULT_DESIGN_REGION / MIN_DESIGN_REGION from
+   * `@/lib/design-scene/region`. Kept only so older imports do not break.
+   */
+  minAiRegionSize: 320,
   minDesignRegionWidth: 320,
   minDesignRegionHeight: 240,
   recommendedDesignRegionWidth: 600,
@@ -29,6 +32,8 @@ export const editorConfig = {
     "name",
     "designBlockId",
     "semanticRole",
+    "excludeFromExport",
+    "isTemporary",
   ] as const,
   /**
    * New local backup namespace. Legacy `canvasai:backup:` keys are still read

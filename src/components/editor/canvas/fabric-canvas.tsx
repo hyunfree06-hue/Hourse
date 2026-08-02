@@ -19,6 +19,13 @@ import {
 } from "@/lib/canvas/custom-properties";
 import { useEditorStore, type EditorTool } from "@/stores/editor-store";
 import { createHistoryController } from "@/lib/canvas/history";
+import {
+  applyAiRegionSize,
+  finalizeAiRegionAfterDrag,
+  getVisualSize,
+  isAiRegionFabricObject,
+  normalizeFabricObjectScale,
+} from "@/lib/design-scene/region";
 
 FabricObject.customProperties = [...FABRIC_CUSTOM_KEYS];
 
@@ -89,6 +96,7 @@ export function FabricCanvas({
       }
       const anyObj = active as FabricObject & {
         objectId?: string;
+        objectRole?: string;
         rx?: number;
         fontSize?: number;
         fontWeight?: string | number;
@@ -100,13 +108,15 @@ export function FabricCanvas({
         strokeLineCap?: string;
         strokeLineJoin?: string;
       };
+      const visual = getVisualSize(active);
       setSelected({
         objectId: anyObj.objectId,
         type: active.type,
+        objectRole: anyObj.objectRole,
         left: active.left,
         top: active.top,
-        width: active.getScaledWidth(),
-        height: active.getScaledHeight(),
+        width: visual.width,
+        height: visual.height,
         angle: active.angle,
         fill: typeof active.fill === "string" ? active.fill : undefined,
         stroke: typeof active.stroke === "string" ? active.stroke : undefined,
@@ -124,18 +134,51 @@ export function FabricCanvas({
         strokeLineJoin: anyObj.strokeLineJoin,
       });
 
-      if ((active as FabricObject & { objectRole?: string }).objectRole === "ai-region") {
+      if (isAiRegionFabricObject(active)) {
         setAiRegion({
           left: active.left ?? 0,
           top: active.top ?? 0,
-          width: active.getScaledWidth(),
-          height: active.getScaledHeight(),
+          width: visual.width,
+          height: visual.height,
         });
         setAiPanelOpen(true);
       }
     };
 
-    const onModified = () => {
+    const onScaling = (opt: { target?: FabricObject }) => {
+      const target = opt.target;
+      if (!target || !isAiRegionFabricObject(target)) return;
+      const visual = getVisualSize(target);
+      setAiRegion({
+        left: target.left ?? 0,
+        top: target.top ?? 0,
+        width: visual.width,
+        height: visual.height,
+      });
+      const current = useEditorStore.getState().selected;
+      if (current) {
+        setSelected({
+          ...current,
+          left: target.left,
+          top: target.top,
+          width: visual.width,
+          height: visual.height,
+        });
+      }
+    };
+
+    const onModified = (opt?: { target?: FabricObject }) => {
+      const target = opt?.target ?? canvas.getActiveObject() ?? undefined;
+      if (target && isAiRegionFabricObject(target)) {
+        normalizeFabricObjectScale(target);
+        const visual = getVisualSize(target);
+        setAiRegion({
+          left: target.left ?? 0,
+          top: target.top ?? 0,
+          width: visual.width,
+          height: visual.height,
+        });
+      }
       historyRef.current.save();
       syncSelection();
       window.dispatchEvent(new CustomEvent("hourse:dirty"));
@@ -145,6 +188,7 @@ export function FabricCanvas({
     canvas.on("selection:updated", syncSelection);
     canvas.on("selection:cleared", () => setSelected(null));
     canvas.on("object:modified", onModified);
+    canvas.on("object:scaling", onScaling);
     canvas.on("object:added", () => {
       window.dispatchEvent(new CustomEvent("hourse:dirty"));
     });
@@ -251,12 +295,15 @@ export function FabricCanvas({
         setTool("select");
         window.dispatchEvent(new CustomEvent("hourse:dirty"));
       } else if (currentTool === "ai-region") {
+        // Placeholder — finalized on mouseup to 320×240 (click) or drag size.
         const region = new Rect(
           withCustomDefaults({
             left: pointer.x,
             top: pointer.y,
-            width: editorConfig.minAiRegionSize,
-            height: editorConfig.minAiRegionSize,
+            width: 1,
+            height: 1,
+            scaleX: 1,
+            scaleY: 1,
             fill: "rgba(99,102,241,0.08)",
             stroke: "#6366f1",
             strokeDashArray: [6, 4],
@@ -264,6 +311,7 @@ export function FabricCanvas({
             objectRole: "ai-region",
             name: "AI region",
             excludeFromExport: true,
+            isTemporary: true,
           }),
         );
         canvas.add(region);
@@ -296,20 +344,29 @@ export function FabricCanvas({
       } else if (draw.object instanceof Circle) {
         const r = Math.max(w, h) / 2;
         draw.object.set({ left, top, radius: Math.max(1, r) });
+      } else if (isAiRegionFabricObject(draw.object)) {
+        // Live drag preview — may be temporarily below minimum until mouseup.
+        applyAiRegionSize(draw.object, {
+          left,
+          top,
+          width: Math.max(1, w),
+          height: Math.max(1, h),
+        });
+        setAiRegion({ left, top, width: Math.max(1, w), height: Math.max(1, h) });
       } else {
-        const min =
-          toolRef.current === "ai-region" ? editorConfig.minAiRegionSize : 1;
         draw.object.set({
           left,
           top,
-          width: Math.max(min, w),
-          height: Math.max(min, h),
+          width: Math.max(1, w),
+          height: Math.max(1, h),
+          scaleX: 1,
+          scaleY: 1,
         });
       }
       canvas.requestRenderAll();
     };
 
-    const onMouseUp = () => {
+    const onMouseUp = (opt?: { e?: Event }) => {
       if (panningRef.current) {
         panningRef.current = false;
         canvas.selection = toolRef.current === "select";
@@ -317,19 +374,24 @@ export function FabricCanvas({
       }
       const draw = drawingRef.current;
       if (draw.active && draw.object) {
-        if (
-          (draw.object as FabricObject & { objectRole?: string }).objectRole ===
-          "ai-region"
-        ) {
-          setAiRegion({
-            left: draw.object.left ?? 0,
-            top: draw.object.top ?? 0,
-            width: draw.object.getScaledWidth(),
-            height: draw.object.getScaledHeight(),
+        if (isAiRegionFabricObject(draw.object)) {
+          const pointer = opt?.e
+            ? getPointer(opt.e as MouseEvent)
+            : { x: draw.startX, y: draw.startY };
+          const finalized = finalizeAiRegionAfterDrag({
+            startX: draw.startX,
+            startY: draw.startY,
+            endX: pointer.x,
+            endY: pointer.y,
+            canvasWidth: canvas.getWidth(),
+            canvasHeight: canvas.getHeight(),
           });
+          applyAiRegionSize(draw.object, finalized);
+          setAiRegion(finalized);
           setAiPanelOpen(true);
           canvas.setActiveObject(draw.object);
           setTool("select");
+          syncSelection();
         }
         historyRef.current.save();
         window.dispatchEvent(new CustomEvent("hourse:dirty"));
@@ -517,6 +579,7 @@ export function FabricCanvas({
       canvas.off("selection:created", syncSelection);
       canvas.off("selection:updated", syncSelection);
       canvas.off("object:modified", onModified);
+      canvas.off("object:scaling", onScaling);
       canvas.off("mouse:down", onMouseDown);
       canvas.off("mouse:move", onMouseMove);
       canvas.off("mouse:up", onMouseUp);

@@ -14,6 +14,17 @@ import {
 import { useEditorStore } from "@/stores/editor-store";
 import { designFonts } from "@/lib/design-scene/font-registry";
 import { LayersPanel } from "@/components/editor/panels/layers-panel";
+import { DimensionDraftInput } from "@/components/editor/properties/dimension-draft-input";
+import {
+  DEFAULT_DESIGN_REGION,
+  MIN_DESIGN_HEIGHT,
+  MIN_DESIGN_WIDTH,
+  applyAiRegionSize,
+  getVisualSize,
+  isAiRegionFabricObject,
+  isDesignRegionLargeEnough,
+  resizeRegionAboutCenter,
+} from "@/lib/design-scene/region";
 import type { FabricObject } from "fabric";
 
 function getCanvasApi() {
@@ -31,10 +42,42 @@ function getCanvasApi() {
           remove: (...o: unknown[]) => void;
           add: (o: unknown) => void;
           discardActiveObject: () => void;
+          getWidth: () => number;
+          getHeight: () => number;
         };
       };
     }
   ).__hourse;
+}
+
+function syncSelectionFromObject(obj: FabricObject) {
+  const visual = getVisualSize(obj);
+  const anyObj = obj as FabricObject & {
+    objectId?: string;
+    objectRole?: string;
+  };
+  useEditorStore.getState().setSelected({
+    objectId: anyObj.objectId,
+    type: obj.type,
+    objectRole: anyObj.objectRole,
+    left: obj.left,
+    top: obj.top,
+    width: visual.width,
+    height: visual.height,
+    angle: obj.angle,
+    fill: typeof obj.fill === "string" ? obj.fill : undefined,
+    stroke: typeof obj.stroke === "string" ? obj.stroke : undefined,
+    strokeWidth: obj.strokeWidth,
+    opacity: obj.opacity,
+  });
+  if (isAiRegionFabricObject(obj)) {
+    useEditorStore.getState().setAiRegion({
+      left: obj.left ?? 0,
+      top: obj.top ?? 0,
+      width: visual.width,
+      height: visual.height,
+    });
+  }
 }
 
 export function PropertiesPanel() {
@@ -50,6 +93,82 @@ export function PropertiesPanel() {
     obj.set(patch);
     obj.setCoords();
     api.canvas.requestRenderAll();
+    syncSelectionFromObject(obj);
+    window.dispatchEvent(new CustomEvent("hourse:dirty"));
+  }
+
+  function applyDimension(axis: "width" | "height", value: number, commit: boolean) {
+    const api = getCanvasApi();
+    if (!api) return;
+    const obj = api.canvas.getActiveObject();
+    if (!obj) return;
+
+    const canvasW = api.canvas.getWidth();
+    const canvasH = api.canvas.getHeight();
+    const visual = getVisualSize(obj);
+    const nextWidth = axis === "width" ? value : visual.width;
+    const nextHeight = axis === "height" ? value : visual.height;
+
+    if (isAiRegionFabricObject(obj)) {
+      const minW = commit ? MIN_DESIGN_WIDTH : 1;
+      const minH = commit ? MIN_DESIGN_HEIGHT : 1;
+      const clampedW = Math.max(minW, Math.min(canvasW, nextWidth));
+      const clampedH = Math.max(minH, Math.min(canvasH, nextHeight));
+      const placed = resizeRegionAboutCenter(
+        {
+          left: obj.left ?? 0,
+          top: obj.top ?? 0,
+          width: visual.width,
+          height: visual.height,
+        },
+        clampedW,
+        clampedH,
+        canvasW,
+        canvasH,
+      );
+      applyAiRegionSize(obj, placed);
+    } else {
+      // Prefer baked width/height with scale 1 so W/H match visual size.
+      obj.set({
+        scaleX: 1,
+        scaleY: 1,
+        width: Math.max(1, nextWidth),
+        height: Math.max(1, nextHeight),
+      });
+      obj.setCoords();
+    }
+
+    api.canvas.requestRenderAll();
+    syncSelectionFromObject(obj);
+    if (commit) {
+      window.dispatchEvent(new CustomEvent("hourse:dirty"));
+    } else {
+      // Debounced autosave still runs via dirty — fire dirty only on commit
+      // to avoid a PATCH per keystroke. Live visual update only.
+    }
+  }
+
+  function resizeAiRegionToMinimum() {
+    const api = getCanvasApi();
+    if (!api) return;
+    const obj = api.canvas.getActiveObject();
+    if (!obj || !isAiRegionFabricObject(obj)) return;
+    const visual = getVisualSize(obj);
+    const placed = resizeRegionAboutCenter(
+      {
+        left: obj.left ?? 0,
+        top: obj.top ?? 0,
+        width: visual.width,
+        height: visual.height,
+      },
+      DEFAULT_DESIGN_REGION.width,
+      DEFAULT_DESIGN_REGION.height,
+      api.canvas.getWidth(),
+      api.canvas.getHeight(),
+    );
+    applyAiRegionSize(obj, placed);
+    api.canvas.requestRenderAll();
+    syncSelectionFromObject(obj);
     window.dispatchEvent(new CustomEvent("hourse:dirty"));
   }
 
@@ -151,6 +270,13 @@ export function PropertiesPanel() {
     selected?.type === "polygon" ||
     selected?.type === "path" ||
     selected?.type === "line";
+  const isAiRegion =
+    selected?.objectRole === "ai-region" ||
+    (typeof window !== "undefined" &&
+      isAiRegionFabricObject(getCanvasApi()?.canvas.getActiveObject() ?? null));
+  const regionBelowMin =
+    isAiRegion &&
+    !isDesignRegionLargeEnough(selected?.width ?? 0, selected?.height ?? 0);
 
   return (
     <aside
@@ -230,37 +356,39 @@ export function PropertiesPanel() {
               Size
             </h2>
             <div className="mt-2 grid grid-cols-2 gap-x-2 gap-y-1.5">
-              <div>
-                <Label className="text-[10px] text-neutral-500">W</Label>
-                <Input
-                  className="h-7 text-xs"
-                  type="number"
-                  value={Math.round(selected.width ?? 0)}
-                  onChange={(e) =>
-                    updateActive({
-                      scaleX:
-                        Number(e.target.value) /
-                        Math.max(1, selected.width ?? 1),
-                    })
-                  }
-                />
-              </div>
-              <div>
-                <Label className="text-[10px] text-neutral-500">H</Label>
-                <Input
-                  className="h-7 text-xs"
-                  type="number"
-                  value={Math.round(selected.height ?? 0)}
-                  onChange={(e) =>
-                    updateActive({
-                      scaleY:
-                        Number(e.target.value) /
-                        Math.max(1, selected.height ?? 1),
-                    })
-                  }
-                />
-              </div>
+              <DimensionDraftInput
+                label="W"
+                committedValue={selected.width ?? 0}
+                min={isAiRegion ? MIN_DESIGN_WIDTH : 1}
+                max={8192}
+                onLiveChange={(value) => applyDimension("width", value, false)}
+                onCommit={(value) => applyDimension("width", value, true)}
+              />
+              <DimensionDraftInput
+                label="H"
+                committedValue={selected.height ?? 0}
+                min={isAiRegion ? MIN_DESIGN_HEIGHT : 1}
+                max={8192}
+                onLiveChange={(value) => applyDimension("height", value, false)}
+                onCommit={(value) => applyDimension("height", value, true)}
+              />
             </div>
+            {regionBelowMin ? (
+              <div className="mt-2 space-y-1.5">
+                <p className="text-[11px] text-amber-600">
+                  Minimum design area: {MIN_DESIGN_WIDTH} × {MIN_DESIGN_HEIGHT}
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-[11px]"
+                  onClick={resizeAiRegionToMinimum}
+                >
+                  Resize to minimum
+                </Button>
+              </div>
+            ) : null}
           </div>
 
           <div className="px-4 py-3">

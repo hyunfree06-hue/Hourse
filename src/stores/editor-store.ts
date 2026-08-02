@@ -16,6 +16,7 @@ export type SaveStatus = "idle" | "saving" | "saved" | "error" | "conflict";
 export type SelectedProps = {
   objectId?: string;
   type?: string;
+  objectRole?: string;
   left?: number;
   top?: number;
   width?: number;

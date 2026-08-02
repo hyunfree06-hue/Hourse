@@ -13,7 +13,6 @@ import {
   QUALITY_LABELS,
   type AiQuality,
 } from "@/config/credits";
-import { editorConfig } from "@/config/editor";
 import { useEditorStore } from "@/stores/editor-store";
 import { aspectRatioLabel } from "@/lib/utils/geometry";
 import { createObjectId } from "@/lib/canvas/custom-properties";
@@ -29,9 +28,10 @@ import {
   logDesignApplyError,
 } from "@/lib/design-scene/apply-operations";
 import {
-  isDesignRegionLargeEnough,
+  DEFAULT_DESIGN_REGION,
   MIN_DESIGN_HEIGHT,
   MIN_DESIGN_WIDTH,
+  isDesignRegionLargeEnough,
 } from "@/lib/design-scene/region";
 
 type Availability = { openai: boolean; bfl: boolean };
@@ -64,7 +64,7 @@ function mapGenerationError(
     case "INVALID_REFINEMENT_SELECTION":
       return "Select at least one editable object to refine.";
     case "DESIGN_REGION_TOO_SMALL":
-      return `Draw a larger area to create an editable design. Minimum size: ${MIN_DESIGN_WIDTH} × ${MIN_DESIGN_HEIGHT}.`;
+      return `Minimum design area: ${MIN_DESIGN_WIDTH} × ${MIN_DESIGN_HEIGHT}`;
     case "DESIGN_PROVIDER_REFUSED":
       return withRefund("This design request could not be completed.");
     case "DESIGN_PROVIDER_INCOMPLETE":
@@ -369,7 +369,7 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
       !isDesignRegionLargeEnough(aiRegion.width, aiRegion.height)
     ) {
       setError(
-        `Draw a larger area to create an editable design. Minimum size: ${MIN_DESIGN_WIDTH} × ${MIN_DESIGN_HEIGHT}.`,
+        `Minimum design area: ${MIN_DESIGN_WIDTH} × ${MIN_DESIGN_HEIGHT}`,
       );
       return;
     }
@@ -585,9 +585,6 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
             >
               {Math.round(aiRegion.width)}&times;{Math.round(aiRegion.height)}{" "}
               &middot; {aspectRatioLabel(aiRegion.width, aiRegion.height)}
-              {regionTooSmall
-                ? ` · min ${editorConfig.minDesignRegionWidth}×${editorConfig.minDesignRegionHeight}`
-                : ""}
             </p>
           ) : isRefine ? (
             <p className="mt-0.5 text-[11px] text-neutral-500">
@@ -595,8 +592,8 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
             </p>
           ) : (
             <p className="mt-0.5 text-[11px] text-amber-600">
-              Draw an area on the canvas (min {MIN_DESIGN_WIDTH}×
-              {MIN_DESIGN_HEIGHT})
+              Click or drag to place a {DEFAULT_DESIGN_REGION.width}×
+              {DEFAULT_DESIGN_REGION.height} area
             </p>
           )}
         </div>
@@ -663,6 +660,12 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
             {credits} remaining
           </span>
         </div>
+
+        {regionTooSmall ? (
+          <p className="text-[11px] text-amber-600">
+            Minimum design area: {MIN_DESIGN_WIDTH} × {MIN_DESIGN_HEIGHT}
+          </p>
+        ) : null}
 
         {status && status !== "insertion_failed" && (
           <p className="text-[11px] text-neutral-500" aria-live="polite">
