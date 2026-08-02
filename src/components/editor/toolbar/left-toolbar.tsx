@@ -14,16 +14,16 @@ import {
 import { cn } from "@/lib/utils/cn";
 import { useEditorStore, type EditorTool } from "@/stores/editor-store";
 
-const tools: { id: EditorTool; label: string; icon: typeof Square }[] = [
-  { id: "select", label: "선택", icon: MousePointer2 },
-  { id: "hand", label: "이동", icon: Hand },
-  { id: "frame", label: "프레임", icon: Frame },
-  { id: "rect", label: "사각형", icon: Square },
-  { id: "ellipse", label: "원", icon: Circle },
-  { id: "line", label: "선", icon: Minus },
-  { id: "text", label: "텍스트", icon: Type },
-  { id: "image", label: "이미지 업로드", icon: ImageIcon },
-  { id: "ai-region", label: "AI 영역", icon: Sparkles },
+const tools: { id: EditorTool; label: string; shortcut?: string; icon: typeof Square }[] = [
+  { id: "select", label: "Select", shortcut: "V", icon: MousePointer2 },
+  { id: "hand", label: "Hand", shortcut: "H", icon: Hand },
+  { id: "frame", label: "Frame", shortcut: "F", icon: Frame },
+  { id: "rect", label: "Rectangle", shortcut: "R", icon: Square },
+  { id: "ellipse", label: "Ellipse", shortcut: "O", icon: Circle },
+  { id: "line", label: "Line", shortcut: "L", icon: Minus },
+  { id: "text", label: "Text", shortcut: "T", icon: Type },
+  { id: "image", label: "Image", icon: ImageIcon },
+  { id: "ai-region", label: "AI region", shortcut: "A", icon: Sparkles },
 ];
 
 export function LeftToolbar({ onUploadImage }: { onUploadImage: () => void }) {
@@ -32,21 +32,22 @@ export function LeftToolbar({ onUploadImage }: { onUploadImage: () => void }) {
 
   return (
     <aside
-      className="flex w-12 flex-col items-center gap-1 border-r border-neutral-200 bg-white py-2"
-      aria-label="도구"
+      className="flex w-11 flex-col items-center gap-0.5 border-r border-[rgba(17,17,19,0.08)] bg-white py-2"
+      aria-label="Tools"
     >
       {tools.map((item) => {
         const Icon = item.icon;
+        const tooltip = item.shortcut ? `${item.label} (${item.shortcut})` : item.label;
         return (
           <button
             key={item.id}
             type="button"
-            title={item.label}
-            aria-label={item.label}
+            title={tooltip}
+            aria-label={tooltip}
             aria-pressed={tool === item.id}
             className={cn(
-              "flex size-9 items-center justify-center rounded-md text-neutral-600 transition hover:bg-neutral-100 hover:text-neutral-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500",
-              tool === item.id && "bg-indigo-50 text-indigo-700",
+              "flex size-8 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#635BFF]/40",
+              tool === item.id && "bg-[#635BFF]/8 text-[#635BFF]",
             )}
             onClick={() => {
               if (item.id === "image") {
@@ -56,7 +57,7 @@ export function LeftToolbar({ onUploadImage }: { onUploadImage: () => void }) {
               setTool(item.id);
             }}
           >
-            <Icon className="size-4" />
+            <Icon className="size-4" strokeWidth={1.75} />
           </button>
         );
       })}

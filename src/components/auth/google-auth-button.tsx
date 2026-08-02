@@ -14,7 +14,7 @@ type GoogleAuthButtonProps = ButtonProps & {
 
 export function GoogleAuthButton({
   nextPath = "/dashboard",
-  label = "Google로 계속하기",
+  label = "Continue with Google",
   ...props
 }: GoogleAuthButtonProps) {
   const router = useRouter();
@@ -25,7 +25,7 @@ export function GoogleAuthButton({
     try {
       if (!hasSupabasePublicConfig()) {
         toast.error(
-          "Supabase가 아직 설정되지 않았습니다. .env.local을 확인하세요.",
+          "Supabase is not configured yet. Check your .env.local file.",
         );
         setLoading(false);
         return;
@@ -53,12 +53,12 @@ export function GoogleAuthButton({
       });
 
       if (error) {
-        toast.error(error.message || "로그인에 실패했습니다.");
+        toast.error(error.message || "Sign-in failed.");
         setLoading(false);
       }
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "로그인에 실패했습니다.",
+        error instanceof Error ? error.message : "Sign-in failed.",
       );
       setLoading(false);
     }

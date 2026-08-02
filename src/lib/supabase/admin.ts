@@ -8,7 +8,7 @@ export function createServiceClient() {
     !env.NEXT_PUBLIC_SUPABASE_URL ||
     !env.SUPABASE_SERVICE_ROLE_KEY
   ) {
-    throw new Error("Supabase service role 환경변수가 설정되지 않았습니다.");
+    throw new Error("Supabase service role environment variables are not configured.");
   }
 
   return createClient<Database>(

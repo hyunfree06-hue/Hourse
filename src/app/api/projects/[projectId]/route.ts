@@ -24,13 +24,13 @@ export async function GET(_req: Request, { params }: Params) {
 
   if (error) {
     return NextResponse.json(
-      { error: { code: "db_error", message: "프로젝트를 불러오지 못했습니다." } },
+      { error: { code: "db_error", message: "Unable to load project." } },
       { status: 500 },
     );
   }
   if (!data) {
     return NextResponse.json(
-      { error: { code: "not_found", message: "프로젝트를 찾을 수 없습니다." } },
+      { error: { code: "not_found", message: "Project not found" } },
       { status: 404 },
     );
   }
@@ -63,7 +63,7 @@ export async function PATCH(req: Request, { params }: Params) {
         .maybeSingle();
 
       if (fetchError || !existing) {
-        throw new AppError("not_found", "프로젝트를 찾을 수 없습니다.", 404);
+        throw new AppError("not_found", "Project not found", 404);
       }
 
       if (existing.updated_at !== parsed.updatedAt) {
@@ -71,7 +71,7 @@ export async function PATCH(req: Request, { params }: Params) {
           {
             error: {
               code: "conflict",
-              message: "다른 탭에서 프로젝트가 수정되었습니다.",
+              message: "This project was updated in another tab.",
             },
             serverUpdatedAt: existing.updated_at,
           },
@@ -94,7 +94,7 @@ export async function PATCH(req: Request, { params }: Params) {
         .single();
 
       if (error || !data) {
-        throw new AppError("save_failed", "저장에 실패했습니다.", 500);
+        throw new AppError("save_failed", "Unable to save.", 500);
       }
       return NextResponse.json({ project: data });
     }
@@ -109,7 +109,7 @@ export async function PATCH(req: Request, { params }: Params) {
       .single();
 
     if (error || !data) {
-      throw new AppError("rename_failed", "이름 변경에 실패했습니다.", 500);
+      throw new AppError("rename_failed", "Unable to rename project.", 500);
     }
     return NextResponse.json({ project: data });
   } catch (error) {
@@ -138,7 +138,7 @@ export async function DELETE(_req: Request, { params }: Params) {
       .eq("user_id", auth.user.id);
 
     if (error) {
-      throw new AppError("delete_failed", "삭제에 실패했습니다.", 500);
+      throw new AppError("delete_failed", "Unable to delete project.", 500);
     }
 
     if (assets && assets.length > 0) {

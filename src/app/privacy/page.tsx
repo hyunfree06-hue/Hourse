@@ -1,45 +1,101 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { LandingHeader, LandingFooter } from "@/components/layout/site-header";
 import { siteConfig } from "@/config/site";
+
+export const metadata: Metadata = {
+  title: "Privacy",
+};
 
 export default function PrivacyPage() {
   return (
     <div className="flex min-h-full flex-col">
       <LandingHeader />
-      <main className="prose prose-neutral mx-auto max-w-3xl flex-1 px-4 py-16 sm:px-6">
-        <h1>개인정보처리방침</h1>
+      <main className="prose prose-neutral prose-sm mx-auto max-w-3xl flex-1 px-4 py-16 sm:px-6">
+        <h1>Privacy Policy</h1>
         <p>
-          {siteConfig.name}(이하 “서비스”)는 개인 디자이너를 위한 AI 디자인
-          캔버스입니다. 본 방침은 서비스가 수집·이용하는 개인정보의 처리에 대해
-          설명합니다.
+          <strong>Effective date:</strong> August 2, 2026
         </p>
-        <h2>수집 항목</h2>
-        <ul>
-          <li>Google 계정 인증을 통해 제공되는 이메일, 이름, 프로필 사진</li>
-          <li>프로젝트 데이터, 업로드·생성 이미지 메타데이터</li>
-          <li>결제 관련 식별자(Lemon Squeezy 주문/구독 ID) 및 크레딧 내역</li>
-        </ul>
-        <h2>이용 목적</h2>
-        <ul>
-          <li>계정 생성 및 인증</li>
-          <li>개인 프로젝트 저장 및 AI 생성 처리</li>
-          <li>결제·구독·크레딧 관리</li>
-          <li>서비스 안정성 개선 및 부정 이용 방지</li>
-        </ul>
-        <h2>보관 및 삭제</h2>
         <p>
-          계정 탈퇴 시 프로필과 연관된 프로젝트·에셋은 삭제됩니다. 법령상 보관이
-          필요한 결제 기록은 관련 기간 동안 유지될 수 있습니다.
+          {siteConfig.name} (&ldquo;we&rdquo;, &ldquo;us&rdquo;, or the
+          &ldquo;Service&rdquo;) is an AI-native visual workspace for
+          independent creators. This policy explains how we collect, use, and
+          protect your personal information.
         </p>
-        <h2>문의</h2>
+
+        <h2>1. Information We Collect</h2>
+        <h3>Account information</h3>
         <p>
-          문의:{" "}
+          When you sign in with Google OAuth, we receive your email address,
+          display name, and profile photo from your Google account. We do not
+          store your Google password.
+        </p>
+        <h3>Projects and assets</h3>
+        <p>
+          We store project data (canvas state, layer metadata) and uploaded or
+          generated image assets associated with your account.
+        </p>
+        <h3>Payment information</h3>
+        <p>
+          Payments are processed by Lemon Squeezy. We store order IDs,
+          subscription IDs, and credit transaction records. We do not store
+          full card numbers.
+        </p>
+        <h3>AI generation data</h3>
+        <p>
+          When you use AI generation features, prompts and parameters are sent
+          to third-party AI providers (OpenAI, Black Forest Labs). Generated
+          images are stored in your project. We do not use your prompts or
+          generated content to train our own models.
+        </p>
+
+        <h2>2. How We Use Your Information</h2>
+        <ul>
+          <li>Create and authenticate your account</li>
+          <li>Store and serve your personal projects and assets</li>
+          <li>Process payments, manage subscriptions, and track credits</li>
+          <li>Improve service reliability and prevent abuse</li>
+        </ul>
+
+        <h2>3. Data Retention</h2>
+        <p>
+          Your data is retained for as long as your account is active. When you
+          delete your account, your profile, projects, and associated assets are
+          permanently removed. Payment records required by law may be retained
+          for the legally mandated period.
+        </p>
+
+        <h2>4. Data Sharing</h2>
+        <p>
+          We do not sell your data. We share information only with service
+          providers necessary to operate the platform: Supabase (database and
+          auth), Lemon Squeezy (payments), and AI providers for generation
+          requests.
+        </p>
+
+        <h2>5. Security</h2>
+        <p>
+          We use encryption in transit (TLS) and at rest where applicable. Access
+          to production data is restricted to authorized personnel.
+        </p>
+
+        <h2>6. Your Rights</h2>
+        <p>
+          You may export your projects, update your profile, or delete your
+          account at any time from the Account settings page.
+        </p>
+
+        <h2>7. Contact</h2>
+        <p>
+          Questions or requests? Email us at{" "}
           <a href={`mailto:${siteConfig.links.supportEmail}`}>
             {siteConfig.links.supportEmail}
           </a>
+          .
         </p>
-        <p>
-          <Link href="/">홈으로</Link>
+
+        <p className="mt-8">
+          <Link href="/">Back to home</Link>
         </p>
       </main>
       <LandingFooter />

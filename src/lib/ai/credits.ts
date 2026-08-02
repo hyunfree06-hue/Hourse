@@ -23,11 +23,11 @@ export async function consumeCreditsAtomic(input: {
     if (error.message.includes("insufficient_credits")) {
       throw new AppError(
         "insufficient_credits",
-        "크레딧이 부족합니다. 요금제 또는 크레딧 팩을 확인해 주세요.",
+        "Insufficient credits",
         402,
       );
     }
-    throw new AppError("credit_error", "크레딧 차감에 실패했습니다.", 500);
+    throw new AppError("credit_error", "Unable to deduct credits.", 500);
   }
 
   return data as number;
@@ -51,7 +51,7 @@ export async function refundCreditsAtomic(input: {
   });
 
   if (error) {
-    throw new AppError("credit_refund_error", "크레딧 환불에 실패했습니다.", 500);
+    throw new AppError("credit_refund_error", "Unable to refund credits.", 500);
   }
 
   return data as number;
@@ -82,7 +82,7 @@ export async function grantCreditsAtomic(input: {
   });
 
   if (error) {
-    throw new AppError("credit_grant_error", "크레딧 지급에 실패했습니다.", 500);
+    throw new AppError("credit_grant_error", "Unable to grant credits.", 500);
   }
 
   return data as number;

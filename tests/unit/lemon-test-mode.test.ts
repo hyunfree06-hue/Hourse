@@ -123,7 +123,7 @@ describe("production live billing guard", () => {
         { ...liveEnv, LEMONSQUEEZY_VARIANT_CREATOR_MONTHLY: "" },
         "production",
       ),
-    ).toThrow(/Live Variant/);
+    ).toThrow(/Live variant/i);
   });
 
   it("skips guards outside production", () => {

@@ -1,22 +1,24 @@
 import { LandingHeader, LandingFooter } from "@/components/layout/site-header";
-import { LandingHero } from "@/components/landing/hero";
-import { LandingFeatures } from "@/components/landing/features";
-import { LandingHowItWorks } from "@/components/landing/how-it-works";
-import { LandingPricingTeaser } from "@/components/landing/pricing-teaser";
-import { LandingFaq } from "@/components/landing/faq";
-import { LandingCta } from "@/components/landing/cta";
+import { HeroSection } from "@/components/landing/hero";
+import { ProductPreview } from "@/components/landing/product-preview";
+import { ValueSection } from "@/components/landing/value-section";
+import { WorkflowSection } from "@/components/landing/workflow-section";
+import { PricingSection } from "@/components/landing/pricing-section";
+import { FaqSection } from "@/components/landing/faq-section";
+import { FinalCta } from "@/components/landing/final-cta";
 
 export default function HomePage() {
   return (
     <div className="flex min-h-full flex-col">
       <LandingHeader />
       <main className="flex-1">
-        <LandingHero />
-        <LandingFeatures />
-        <LandingHowItWorks />
-        <LandingPricingTeaser />
-        <LandingFaq />
-        <LandingCta />
+        <HeroSection />
+        <ProductPreview />
+        <ValueSection />
+        <WorkflowSection />
+        <PricingSection />
+        <FaqSection />
+        <FinalCta />
       </main>
       <LandingFooter />
     </div>

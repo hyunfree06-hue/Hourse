@@ -29,7 +29,7 @@ export async function GET(_req: Request, { params }: Params) {
       .maybeSingle();
 
     if (error || !generation) {
-      throw new AppError("not_found", "생성 요청을 찾을 수 없습니다.", 404);
+      throw new AppError("not_found", "Generation not found", 404);
     }
 
     if (
@@ -67,7 +67,7 @@ export async function GET(_req: Request, { params }: Params) {
           userId: auth.user.id,
           amount: generation.credits_charged,
           errorCode: "timeout",
-          errorMessage: "생성 시간이 초과되었습니다. 크레딧이 환불되었습니다.",
+          errorMessage: "Generation timed out. Your credits were restored.",
         });
         const { data: failed } = await admin
           .from("ai_generations")
@@ -95,7 +95,7 @@ export async function GET(_req: Request, { params }: Params) {
           amount: generation.credits_charged,
           errorCode: status.errorCode ?? "poll_failed",
           errorMessage:
-            status.errorMessage ?? "FLUX polling에 실패했습니다.",
+            status.errorMessage ?? "Generation failed. Your credits were restored.",
         });
         const { data: failed } = await admin
           .from("ai_generations")

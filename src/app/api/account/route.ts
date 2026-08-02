@@ -49,7 +49,7 @@ export async function DELETE() {
 
     const { error } = await admin.auth.admin.deleteUser(auth.user.id);
     if (error) {
-      throw new AppError("delete_failed", "계정 삭제에 실패했습니다.", 500);
+      throw new AppError("delete_failed", "Unable to delete account.", 500);
     }
 
     return NextResponse.json({ ok: true });

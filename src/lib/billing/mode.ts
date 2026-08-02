@@ -43,7 +43,7 @@ export function assertCheckoutTestModeMatches(input: {
   if (input.expectedTestMode !== input.actualTestMode) {
     throw new AppError(
       "checkout_mode_mismatch",
-      `Checkout test_mode(${String(input.actualTestMode)})가 서버 설정(${String(input.expectedTestMode)})과 다릅니다. Live/Test Variant·API Key·Store를 혼용하지 마세요.`,
+      `Checkout test_mode (${String(input.actualTestMode)}) does not match the server configuration (${String(input.expectedTestMode)}). Do not mix live and test variants, API keys, or stores.`,
       502,
     );
   }
@@ -73,7 +73,7 @@ export function assertProductionLiveBilling(
     );
     throw new AppError(
       "billing_test_mode_in_production",
-      "운영 환경에서 테스트 결제 모드가 켜져 있습니다. LEMONSQUEEZY_TEST_MODE=false 로 설정하세요.",
+      "Test billing mode is enabled in production. Set LEMONSQUEEZY_TEST_MODE=false.",
       503,
     );
   }
@@ -81,7 +81,7 @@ export function assertProductionLiveBilling(
   if (!env.LEMONSQUEEZY_API_KEY) {
     throw new AppError(
       "billing_live_api_key_missing",
-      "운영 환경에는 Live Mode API Key가 필요합니다.",
+      "A live-mode API key is required in production.",
       503,
     );
   }
@@ -89,7 +89,7 @@ export function assertProductionLiveBilling(
   if (!env.LEMONSQUEEZY_STORE_ID) {
     throw new AppError(
       "billing_live_store_missing",
-      "운영 환경에는 Live Store ID가 필요합니다.",
+      "A live store ID is required in production.",
       503,
     );
   }
@@ -105,7 +105,7 @@ export function assertProductionLiveBilling(
   if (missingVariants.length > 0) {
     throw new AppError(
       "billing_live_variant_missing",
-      `운영 환경에는 Live Variant ID가 필요합니다: ${missingVariants.join(", ")}`,
+      `Live variant IDs are required in production: ${missingVariants.join(", ")}`,
       503,
     );
   }
@@ -138,6 +138,6 @@ export function assertVariantModeConsistency(input: {
   });
 
   if (!input.variantId.trim()) {
-    throw new AppError("variant_missing", "Variant ID가 비어 있습니다.", 400);
+    throw new AppError("variant_missing", "Variant ID is empty.", 400);
   }
 }

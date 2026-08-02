@@ -19,7 +19,7 @@ export function createImageProvider(
   if (!availability[provider]) {
     throw new AppError(
       "provider_unavailable",
-      "서버에 API 키가 설정되지 않았습니다.",
+      "Image generation is temporarily unavailable.",
       503,
     );
   }

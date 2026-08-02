@@ -6,7 +6,7 @@ import { parseLemonSqueezyTestMode, warnIfTestModeInNonLocal } from "@/lib/billi
  */
 const serverEnvSchema = z.object({
   NEXT_PUBLIC_APP_URL: z.string().url().default("http://localhost:3000"),
-  NEXT_PUBLIC_BRAND_NAME: z.string().default("CanvasAI"),
+  NEXT_PUBLIC_BRAND_NAME: z.string().default("Hourse"),
   NEXT_PUBLIC_SUPABASE_URL: z.string().optional().default(""),
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: z.string().optional().default(""),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional().default(""),
@@ -46,7 +46,7 @@ export function getServerEnv(): ServerEnv {
   const parsed = serverEnvSchema.safeParse(process.env);
   if (!parsed.success) {
     console.error("Invalid server env", parsed.error.flatten().fieldErrors);
-    throw new Error("서버 환경변수 검증에 실패했습니다.");
+    throw new Error("Server environment variable validation failed.");
   }
   cached = parsed.data;
   warnIfTestModeInNonLocal({

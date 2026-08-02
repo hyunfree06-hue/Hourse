@@ -17,7 +17,7 @@ export async function POST(req: Request) {
     !verifyLemonSignature(rawBody, signature, env.LEMONSQUEEZY_WEBHOOK_SECRET)
   ) {
     return NextResponse.json(
-      { error: { code: "invalid_signature", message: "서명 검증 실패" } },
+      { error: { code: "invalid_signature", message: "Invalid signature" } },
       { status: 401 },
     );
   }
@@ -30,7 +30,7 @@ export async function POST(req: Request) {
     payload = JSON.parse(rawBody) as typeof payload;
   } catch {
     return NextResponse.json(
-      { error: { code: "invalid_json", message: "잘못된 JSON" } },
+      { error: { code: "invalid_json", message: "Invalid request body" } },
       { status: 400 },
     );
   }
@@ -58,7 +58,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, duplicate: true });
     }
     return NextResponse.json(
-      { error: { code: "store_failed", message: "웹훅 저장 실패" } },
+      { error: { code: "store_failed", message: "Unable to store webhook" } },
       { status: 500 },
     );
   }
@@ -77,7 +77,7 @@ export async function POST(req: Request) {
       .eq("id", inserted.id);
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "웹훅 처리 실패";
+      error instanceof Error ? error.message : "Unable to process webhook";
     await admin
       .from("webhook_events")
       .update({
@@ -86,7 +86,7 @@ export async function POST(req: Request) {
       })
       .eq("id", inserted.id);
     return NextResponse.json(
-      { error: { code: "processing_failed", message: "웹훅 처리 실패" } },
+      { error: { code: "processing_failed", message: "Unable to process webhook" } },
       { status: 500 },
     );
   }

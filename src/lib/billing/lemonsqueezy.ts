@@ -31,7 +31,7 @@ export function setupLemon() {
   if (!hasLemonConfig()) {
     throw new AppError(
       "billing_not_configured",
-      "결제 설정이 완료되지 않았습니다.",
+      "Billing is not configured.",
       503,
     );
   }
@@ -62,7 +62,7 @@ async function assertLiveVariantMatchesPlan(
   if (error || !data?.data) {
     throw new AppError(
       "variant_lookup_failed",
-      "Lemon Squeezy Variant를 확인할 수 없습니다.",
+      "Unable to verify the Lemon Squeezy variant.",
       502,
     );
   }
@@ -77,7 +77,7 @@ async function assertLiveVariantMatchesPlan(
   if (Boolean(attrs.test_mode) !== Boolean(getServerEnv().LEMONSQUEEZY_TEST_MODE)) {
     throw new AppError(
       "variant_mode_mismatch",
-      "Variant의 test/live 모드가 서버 설정과 다릅니다.",
+      "This variant's test/live mode does not match the server configuration.",
       502,
     );
   }
@@ -106,7 +106,7 @@ async function assertLiveVariantMatchesPlan(
   if (typeof unitPrice === "number" && unitPrice !== plan.priceAmountCents) {
     throw new AppError(
       "variant_price_mismatch",
-      `Variant 가격(${unitPrice})이 서버 설정(${plan.priceAmountCents} cents USD)과 다릅니다.`,
+      `Variant price (${unitPrice}) does not match the server configuration (${plan.priceAmountCents} cents USD).`,
       502,
     );
   }
@@ -119,7 +119,7 @@ async function assertLiveVariantMatchesPlan(
     if (category && category !== "subscription" && !looksSubscription) {
       throw new AppError(
         "variant_type_mismatch",
-        "구독 상품 Variant가 아닙니다.",
+        "This variant is not a subscription product.",
         502,
       );
     }
@@ -129,7 +129,7 @@ async function assertLiveVariantMatchesPlan(
     if (category === "subscription" || attrs.is_subscription === true) {
       throw new AppError(
         "variant_type_mismatch",
-        "일회성 Credit Pack Variant가 아닙니다.",
+        "This variant is not a one-time credit pack.",
         502,
       );
     }
@@ -157,21 +157,21 @@ export async function createLemonCheckout(input: {
   const expectedTestMode = env.LEMONSQUEEZY_TEST_MODE;
   const product = getPlanByCheckoutCode(input.planCode);
   if (!product || !product.variantEnvKey) {
-    throw new AppError("invalid_product", "유효하지 않은 요금제입니다.", 400);
+    throw new AppError("invalid_product", "Invalid plan.", 400);
   }
 
   const variantId = getVariantIdForProduct(product);
   if (!variantId) {
     throw new AppError(
       "variant_missing",
-      "상품 Variant ID가 설정되지 않았습니다.",
+      "Product variant ID is not configured.",
       503,
     );
   }
 
   const allowed = getAllowedVariantIds();
   if (!allowed.includes(variantId)) {
-    throw new AppError("variant_not_allowed", "허용되지 않은 상품입니다.", 400);
+    throw new AppError("variant_not_allowed", "This product is not allowed.", 400);
   }
 
   await assertLiveVariantMatchesPlan(variantId, product);
@@ -196,7 +196,7 @@ export async function createLemonCheckout(input: {
   if (error || !data?.data?.attributes?.url) {
     throw new AppError(
       "checkout_failed",
-      "Checkout 생성에 실패했습니다.",
+      "Unable to create checkout.",
       500,
     );
   }

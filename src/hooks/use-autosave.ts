@@ -10,6 +10,37 @@ type Props = {
   initialUpdatedAt: string;
 };
 
+type HourseWindow = {
+  canvas: {
+    toJSON: () => unknown;
+    backgroundColor?: string;
+    getWidth: () => number;
+    getHeight: () => number;
+    toDataURL: (o: object) => string;
+    loadFromJSON: (j: unknown) => Promise<unknown>;
+    requestRenderAll: () => void;
+  };
+};
+
+function getHourseApi(): HourseWindow | undefined {
+  return (window as unknown as { __hourse?: HourseWindow }).__hourse;
+}
+
+function readLocalBackup(projectId: string): string | null {
+  const backupKey = `${editorConfig.localBackupPrefix}${projectId}`;
+  const legacyBackupKey = `${editorConfig.legacyLocalBackupPrefix}${projectId}`;
+
+  const current = localStorage.getItem(backupKey);
+  if (current) return current;
+
+  const legacy = localStorage.getItem(legacyBackupKey);
+  if (!legacy) return null;
+
+  localStorage.setItem(backupKey, legacy);
+  localStorage.removeItem(legacyBackupKey);
+  return legacy;
+}
+
 export function useAutosave({ projectId, initialUpdatedAt }: Props) {
   const setSaveStatus = useEditorStore((s) => s.setSaveStatus);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -23,19 +54,7 @@ export function useAutosave({ projectId, initialUpdatedAt }: Props) {
   const save = useCallback(
     async (force = false) => {
       if (savingRef.current) return;
-      const api = (
-        window as unknown as {
-          __canvasai?: {
-            canvas: {
-              toJSON: () => unknown;
-              backgroundColor?: string;
-              getWidth: () => number;
-              getHeight: () => number;
-              toDataURL: (o: object) => string;
-            };
-          };
-        }
-      ).__canvasai;
+      const api = getHourseApi();
       if (!api) return;
       if (!dirtyRef.current && !force) return;
 
@@ -72,7 +91,7 @@ export function useAutosave({ projectId, initialUpdatedAt }: Props) {
         if (res.status === 409) {
           setSaveStatus("conflict");
           const choice = window.confirm(
-            "다른 탭에서 프로젝트가 수정되었습니다.\n확인: 서버 최신 버전 불러오기\n취소: 내 버전으로 덮어쓰기",
+            "This project was updated in another tab.\nOK: Load the latest version from the server\nCancel: Overwrite with your version",
           );
           if (choice) {
             window.location.reload();
@@ -88,10 +107,12 @@ export function useAutosave({ projectId, initialUpdatedAt }: Props) {
             }),
           });
           const retryData = await retry.json();
-          if (!retry.ok) throw new Error(retryData.error?.message ?? "저장 실패");
+          if (!retry.ok) {
+            throw new Error(retryData.error?.message ?? "Unable to save");
+          }
           updatedAtRef.current = retryData.project.updated_at;
         } else if (!res.ok) {
-          throw new Error(data.error?.message ?? "저장 실패");
+          throw new Error(data.error?.message ?? "Unable to save");
         } else {
           updatedAtRef.current = data.project.updated_at;
         }
@@ -117,7 +138,7 @@ export function useAutosave({ projectId, initialUpdatedAt }: Props) {
       } catch (error) {
         setSaveStatus("error");
         toast.error(
-          error instanceof Error ? error.message : "저장에 실패했습니다.",
+          error instanceof Error ? error.message : "Unable to save.",
         );
       } finally {
         savingRef.current = false;
@@ -140,8 +161,8 @@ export function useAutosave({ projectId, initialUpdatedAt }: Props) {
       void save(true);
     };
 
-    window.addEventListener("canvasai:dirty", onDirty);
-    window.addEventListener("canvasai:force-save", onForce);
+    window.addEventListener("hourse:dirty", onDirty);
+    window.addEventListener("hourse:force-save", onForce);
 
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       if (dirtyRef.current) {
@@ -152,7 +173,7 @@ export function useAutosave({ projectId, initialUpdatedAt }: Props) {
     };
     window.addEventListener("beforeunload", onBeforeUnload);
 
-    const backupRaw = localStorage.getItem(backupKey);
+    const backupRaw = readLocalBackup(projectId);
     if (backupRaw) {
       try {
         const backup = JSON.parse(backupRaw) as {
@@ -165,19 +186,10 @@ export function useAutosave({ projectId, initialUpdatedAt }: Props) {
             new Date(initialUpdatedAt).getTime() + 1000
         ) {
           const restore = window.confirm(
-            "로컬에 더 최신 임시 저장본이 있습니다. 복구할까요?",
+            "A newer local backup was found. Restore it?",
           );
           if (restore) {
-            const api = (
-              window as unknown as {
-                __canvasai?: {
-                  canvas: {
-                    loadFromJSON: (j: unknown) => Promise<unknown>;
-                    requestRenderAll: () => void;
-                  };
-                };
-              }
-            ).__canvasai;
+            const api = getHourseApi();
             void api?.canvas.loadFromJSON(backup.payload).then(() => {
               api.canvas.requestRenderAll();
               dirtyRef.current = true;
@@ -190,12 +202,12 @@ export function useAutosave({ projectId, initialUpdatedAt }: Props) {
     }
 
     return () => {
-      window.removeEventListener("canvasai:dirty", onDirty);
-      window.removeEventListener("canvasai:force-save", onForce);
+      window.removeEventListener("hourse:dirty", onDirty);
+      window.removeEventListener("hourse:force-save", onForce);
       window.removeEventListener("beforeunload", onBeforeUnload);
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [backupKey, initialUpdatedAt, save, setSaveStatus]);
+  }, [initialUpdatedAt, projectId, save, setSaveStatus]);
 
   return { save };
 }

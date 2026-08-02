@@ -33,7 +33,7 @@ export function createHistoryController() {
       await canvas.loadFromJSON(JSON.parse(stack[index]) as object);
       canvas.requestRenderAll();
       locked = false;
-      window.dispatchEvent(new CustomEvent("canvasai:dirty"));
+      window.dispatchEvent(new CustomEvent("hourse:dirty"));
     },
     async redo() {
       if (!canvas || index >= stack.length - 1) return;
@@ -42,7 +42,7 @@ export function createHistoryController() {
       await canvas.loadFromJSON(JSON.parse(stack[index]) as object);
       canvas.requestRenderAll();
       locked = false;
-      window.dispatchEvent(new CustomEvent("canvasai:dirty"));
+      window.dispatchEvent(new CustomEvent("hourse:dirty"));
     },
   };
 }

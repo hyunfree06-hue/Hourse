@@ -1,15 +1,24 @@
 export const siteConfig = {
-  name: "CanvasAI",
-  tagline: "개인 디자이너를 위한 AI 디자인 캔버스",
+  name: "Hourse",
+  shortName: "Hourse",
+  tagline: "Turn ideas into editable design.",
   description:
-    "무한 캔버스에서 도형·텍스트·이미지를 편집하고, AI 영역을 지정해 OpenAI 또는 FLUX로 디자인을 생성하세요.",
-  url: process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
+    "An AI-native visual workspace for independent creators.",
+  url: process.env.NEXT_PUBLIC_APP_URL ?? "https://hourse-two.vercel.app",
   links: {
     twitter: "",
     github: "",
-    supportEmail: "support@canvasai.app",
+    supportEmail:
+      process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? "support@hourse.app",
   },
   ogImage: "/og.png",
+  brand: {
+    markDark: "/brand/hourse-mark-dark.png",
+    markLight: "/brand/hourse-mark-light.png",
+    lockupDark: "/brand/hourse-lockup-dark.png",
+    lockupLight: "/brand/hourse-lockup-light.png",
+    favicon: "/brand/hourse-favicon.svg",
+  },
 } as const;
 
 export type SiteConfig = typeof siteConfig;

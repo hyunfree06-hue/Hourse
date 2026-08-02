@@ -1,8 +1,13 @@
 import { Suspense } from "react";
+import type { Metadata } from "next";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/auth/session";
 import { BillingClient } from "./billing-client";
 import { redirect } from "next/navigation";
+
+export const metadata: Metadata = {
+  title: "Billing",
+};
 
 export default async function BillingPage() {
   const profile = await getCurrentProfile();

@@ -51,7 +51,7 @@ export async function POST(
   const file = form.get("file");
   if (!(file instanceof File)) {
     return NextResponse.json(
-      { error: { code: "invalid_file", message: "썸네일 파일이 필요합니다." } },
+      { error: { code: "invalid_file", message: "Thumbnail file is required." } },
       { status: 400 },
     );
   }
@@ -66,7 +66,7 @@ export async function POST(
 
   if (!project) {
     return NextResponse.json(
-      { error: { code: "not_found", message: "프로젝트를 찾을 수 없습니다." } },
+      { error: { code: "not_found", message: "Project not found" } },
       { status: 404 },
     );
   }
@@ -80,7 +80,7 @@ export async function POST(
 
   if (uploadError) {
     return NextResponse.json(
-      { error: { code: "upload_failed", message: "썸네일 업로드에 실패했습니다." } },
+      { error: { code: "upload_failed", message: "Unable to upload thumbnail." } },
       { status: 500 },
     );
   }

@@ -2,7 +2,7 @@ export const editorConfig = {
   defaultCanvasWidth: 1920,
   defaultCanvasHeight: 1080,
   defaultBackgroundColor: "#ffffff",
-  defaultProjectName: "제목 없는 디자인",
+  defaultProjectName: "Untitled project",
   autosaveDebounceMs: 1500,
   thumbnailMinIntervalMs: 60_000,
   minAiRegionSize: 64,
@@ -10,6 +10,7 @@ export const editorConfig = {
   minZoom: 0.1,
   zoomStep: 0.1,
   gridSize: 8,
+  exportFilePrefix: "hourse-project",
   customObjectProperties: [
     "objectId",
     "assetId",
@@ -19,11 +20,20 @@ export const editorConfig = {
     "locked",
     "name",
   ] as const,
-  localBackupPrefix: "canvasai:backup:",
+  /**
+   * New local backup namespace. Legacy `canvasai:backup:` keys are still read
+   * once for migration so existing drafts are not lost (never shown in UI).
+   */
+  localBackupPrefix: "hourse:backup:",
+  legacyLocalBackupPrefix: "canvasai:backup:",
 } as const;
 
 export const uploadConfig = {
-  maxUploadMb: Number(process.env.AI_MAX_UPLOAD_MB ?? process.env.NEXT_PUBLIC_AI_MAX_UPLOAD_MB ?? 10),
+  maxUploadMb: Number(
+    process.env.AI_MAX_UPLOAD_MB ??
+      process.env.NEXT_PUBLIC_AI_MAX_UPLOAD_MB ??
+      10,
+  ),
   allowedMimeTypes: [
     "image/png",
     "image/jpeg",

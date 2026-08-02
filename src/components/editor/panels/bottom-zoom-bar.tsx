@@ -12,9 +12,9 @@ export function BottomZoomBar() {
   function applyZoom(next: number) {
     const api = (
       window as unknown as {
-        __canvasai?: { canvas: { setZoom: (z: number) => void; requestRenderAll: () => void } };
+        __hourse?: { canvas: { setZoom: (z: number) => void; requestRenderAll: () => void } };
       }
-    ).__canvasai;
+    ).__hourse;
     const z = Math.min(
       editorConfig.maxZoom,
       Math.max(editorConfig.minZoom, next),
@@ -32,29 +32,41 @@ export function BottomZoomBar() {
     );
   }
 
+  function resetTo100() {
+    applyZoom(1);
+  }
+
   return (
-    <div className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 rounded-md border border-neutral-200 bg-white px-2 py-1 shadow-sm">
+    <div className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-0.5 rounded-lg border border-[rgba(17,17,19,0.08)] bg-white px-1.5 py-1 shadow-sm">
       <Button
         variant="ghost"
         size="icon"
-        aria-label="축소"
+        className="size-7"
+        aria-label="Zoom out"
         onClick={() => applyZoom(zoom - editorConfig.zoomStep)}
       >
-        <Minus className="size-4" />
+        <Minus className="size-3.5" />
       </Button>
-      <span className="min-w-12 text-center text-xs tabular-nums text-neutral-700">
+      <button
+        type="button"
+        className="min-w-11 rounded px-1.5 py-0.5 text-center text-[11px] font-medium tabular-nums text-neutral-700 hover:bg-neutral-100"
+        onClick={resetTo100}
+        aria-label="Reset to 100%"
+      >
         {Math.round(zoom * 100)}%
-      </span>
+      </button>
       <Button
         variant="ghost"
         size="icon"
-        aria-label="확대"
+        className="size-7"
+        aria-label="Zoom in"
         onClick={() => applyZoom(zoom + editorConfig.zoomStep)}
       >
-        <Plus className="size-4" />
+        <Plus className="size-3.5" />
       </Button>
-      <Button variant="ghost" size="sm" onClick={fit} aria-label="화면 맞춤">
-        맞춤
+      <div className="mx-0.5 h-4 w-px bg-[rgba(17,17,19,0.08)]" aria-hidden />
+      <Button variant="ghost" size="sm" className="h-7 px-2 text-[11px]" onClick={fit} aria-label="Fit to screen">
+        Fit
       </Button>
     </div>
   );

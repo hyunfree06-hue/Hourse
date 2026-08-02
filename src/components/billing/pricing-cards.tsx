@@ -42,79 +42,83 @@ export function PricingCards({ isLoggedIn }: { isLoggedIn: boolean }) {
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error?.message ?? "Checkout 생성에 실패했습니다.");
+        throw new Error(data.error?.message ?? "Failed to create checkout session.");
       }
       window.location.href = data.url;
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "결제 시작 실패");
+      toast.error(error instanceof Error ? error.message : "Checkout failed");
       setLoadingCode(null);
     }
   }
 
   return (
-    <div className="space-y-6">
-      <p className="text-sm text-neutral-500">
-        결제는 미국 달러(USD)로 처리됩니다. 카드사에 따라 해외 결제 수수료 또는
-        환전 수수료가 발생할 수 있습니다.
+    <div className="space-y-5">
+      <p className="text-[13px] text-neutral-500">
+        All prices are in USD. Your card issuer may apply foreign transaction or
+        currency conversion fees.
       </p>
-      <div className="grid gap-6 lg:grid-cols-4">
+      <div className="grid gap-5 lg:grid-cols-4">
         {billingPlans.map((plan) => {
           const checkoutKey = plan.checkoutCode ?? plan.code;
           return (
             <div
               key={plan.code}
-              className={`flex flex-col rounded-xl border p-6 ${
+              className={`flex flex-col rounded-lg border p-5 ${
                 plan.highlighted
-                  ? "border-indigo-300 bg-indigo-50/30"
+                  ? "border-[#635BFF]/30 bg-[#635BFF]/[0.03]"
                   : "border-neutral-200 bg-white"
               }`}
             >
-              <h2 className="text-lg font-semibold text-neutral-900">
+              <h2 className="text-[15px] font-semibold text-neutral-900">
                 {plan.name}
               </h2>
-              <p className="mt-1 text-sm text-neutral-500">{plan.description}</p>
-              <p className="mt-4 text-3xl font-semibold">
+              <p className="mt-1 text-[13px] text-neutral-500">{plan.description}</p>
+              <p className="mt-4 text-2xl font-semibold text-neutral-950">
                 {formatPlanPrice(plan)}
               </p>
-              <p className="text-sm text-neutral-500">
+              <p className="text-[12px] text-neutral-400">
                 {formatPlanPriceLabel(plan)}
               </p>
-              <ul className="mt-5 flex-1 space-y-2 text-sm text-neutral-600">
+              <ul className="mt-4 flex-1 space-y-1.5 text-[13px] text-neutral-600">
                 {plan.features.map((f) => (
-                  <li key={f}>· {f}</li>
+                  <li key={f}>&middot; {f}</li>
                 ))}
               </ul>
-              <div className="mt-6">
+              <div className="mt-5">
                 {plan.billingType === "free" ? (
                   isLoggedIn ? (
                     <Button
                       className="w-full"
+                      size="sm"
                       variant="outline"
                       onClick={() => router.push("/dashboard")}
                     >
-                      대시보드로 이동
+                      Go to dashboard
                     </Button>
                   ) : (
                     <GoogleAuthButton
                       className="w-full"
-                      label="무료로 시작"
+                      size="sm"
+                      label="Start free"
                       nextPath="/dashboard"
                     />
                   )
                 ) : isLoggedIn ? (
                   <Button
                     className="w-full"
+                    size="sm"
                     variant={plan.highlighted ? "default" : "outline"}
                     loading={loadingCode === checkoutKey}
                     onClick={() => startCheckout(checkoutKey)}
                   >
-                    선택하기
+                    Select
                   </Button>
                 ) : (
                   <GoogleAuthButton
                     className="w-full"
+                    size="sm"
                     variant={plan.highlighted ? "default" : "outline"}
-                    label="로그인 후 선택"
+                    label="Sign in to select"
                     nextPath={`/pricing?plan=${checkoutKey}`}
                   />
                 )}

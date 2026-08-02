@@ -22,7 +22,7 @@ export async function POST(
 
   if (error || !source) {
     return NextResponse.json(
-      { error: { code: "not_found", message: "프로젝트를 찾을 수 없습니다." } },
+      { error: { code: "not_found", message: "Project not found" } },
       { status: 404 },
     );
   }
@@ -31,7 +31,7 @@ export async function POST(
     .from("projects")
     .insert({
       user_id: auth.user.id,
-      name: `${source.name} 복사본`,
+      name: `${source.name} Copy`,
       canvas_json: source.canvas_json,
       canvas_width: source.canvas_width,
       canvas_height: source.canvas_height,
@@ -43,7 +43,7 @@ export async function POST(
 
   if (insertError || !data) {
     return NextResponse.json(
-      { error: { code: "duplicate_failed", message: "복제에 실패했습니다." } },
+      { error: { code: "duplicate_failed", message: "Unable to duplicate project" } },
       { status: 500 },
     );
   }

@@ -39,7 +39,7 @@ export function toErrorResponse(error: unknown): {
     body: {
       error: {
         code: "internal_error",
-        message: "요청을 처리하는 중 오류가 발생했습니다.",
+        message: "Something went wrong. Please try again.",
       },
     },
   };

@@ -32,7 +32,7 @@ export class OpenAIImageProvider implements ImageGenerationProvider {
   constructor() {
     const env = getServerEnv();
     if (!hasOpenAiKey()) {
-      throw new Error("OPENAI_API_KEY가 설정되지 않았습니다.");
+      throw new Error("OPENAI_API_KEY is not configured.");
     }
     this.client = new OpenAI({ apiKey: env.OPENAI_API_KEY });
     this.model = env.OPENAI_IMAGE_MODEL;
@@ -53,7 +53,7 @@ export class OpenAIImageProvider implements ImageGenerationProvider {
         return {
           status: "failed",
           errorCode: "empty_response",
-          errorMessage: "OpenAI가 이미지를 반환하지 않았습니다.",
+          errorMessage: "Generation failed.",
         };
       }
 
@@ -78,7 +78,7 @@ export class OpenAIImageProvider implements ImageGenerationProvider {
       return {
         status: "failed",
         errorCode: "empty_response",
-        errorMessage: "OpenAI 응답에 이미지 데이터가 없습니다.",
+        errorMessage: "Generation failed.",
       };
     } catch (error) {
       return normalizeOpenAiError(error);
@@ -111,7 +111,7 @@ export class OpenAIImageProvider implements ImageGenerationProvider {
         return {
           status: "failed",
           errorCode: "empty_response",
-          errorMessage: "OpenAI 편집 결과가 비어 있습니다.",
+          errorMessage: "Generation failed.",
         };
       }
 
@@ -139,7 +139,7 @@ export class OpenAIImageProvider implements ImageGenerationProvider {
       return {
         status: "failed",
         errorCode: "empty_response",
-        errorMessage: "OpenAI 편집 응답에 이미지가 없습니다.",
+        errorMessage: "Generation failed.",
       };
     } catch (error) {
       return normalizeOpenAiError(error);
@@ -149,7 +149,7 @@ export class OpenAIImageProvider implements ImageGenerationProvider {
 
 function normalizeOpenAiError(error: unknown): GenerationProviderResult {
   const message =
-    error instanceof Error ? error.message : "OpenAI 요청에 실패했습니다.";
+    error instanceof Error ? error.message : "Generation failed.";
   const lower = message.toLowerCase();
   let errorCode = "provider_error";
   if (lower.includes("safety") || lower.includes("moderation")) {
@@ -164,7 +164,7 @@ function normalizeOpenAiError(error: unknown): GenerationProviderResult {
     errorCode,
     errorMessage:
       errorCode === "safety_rejection"
-        ? "안전 정책에 의해 생성이 거절되었습니다. 프롬프트를 수정해 주세요."
-        : message,
+        ? "This prompt was rejected by our safety policy. Please revise it and try again."
+        : "Generation failed.",
   };
 }

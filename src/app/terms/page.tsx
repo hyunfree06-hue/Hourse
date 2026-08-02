@@ -1,47 +1,111 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { LandingHeader, LandingFooter } from "@/components/layout/site-header";
 import { siteConfig } from "@/config/site";
+
+export const metadata: Metadata = {
+  title: "Terms",
+};
 
 export default function TermsPage() {
   return (
     <div className="flex min-h-full flex-col">
       <LandingHeader />
-      <main className="prose prose-neutral mx-auto max-w-3xl flex-1 px-4 py-16 sm:px-6">
-        <h1>이용약관</h1>
+      <main className="prose prose-neutral prose-sm mx-auto max-w-3xl flex-1 px-4 py-16 sm:px-6">
+        <h1>Terms of Service</h1>
         <p>
-          {siteConfig.name} 서비스를 이용함으로써 본 약관에 동의하는 것으로
-          간주됩니다.
+          <strong>Effective date:</strong> August 2, 2026
         </p>
-        <h2>서비스 성격</h2>
         <p>
-          본 서비스는 개인 디자이너를 위한 AI 캔버스이며, 팀 워크스페이스·공동
-          편집·공유 링크 공동 수정 기능을 제공하지 않습니다. 프로젝트는 생성한
-          사용자 본인만 접근할 수 있습니다.
+          By using {siteConfig.name} (the &ldquo;Service&rdquo;), you agree to
+          these terms. If you do not agree, do not use the Service.
         </p>
-        <h2>계정</h2>
+
+        <h2>1. Service Description</h2>
         <p>
-          Google OAuth를 통해서만 가입·로그인할 수 있습니다. 계정 보안은 사용자
-          본인의 Google 계정 관리에 따릅니다.
+          {siteConfig.name} is an AI-native visual workspace for individual
+          creators. Projects are private to the account that created them. The
+          Service does not offer team workspaces, shared editing, or public
+          sharing links.
         </p>
-        <h2>크레딧과 결제</h2>
+
+        <h2>2. Accounts</h2>
         <p>
-          AI 생성에는 서비스 내부 크레딧이 사용됩니다. 유료 구독 및 크레딧 팩은
-          Lemon Squeezy를 통해 결제되며, 환불 정책은 결제 대행사의 정책과 서비스
-          안내에 따릅니다.
+          You sign in via Google OAuth. You are responsible for the security of
+          your Google account. One person per account; accounts are
+          non-transferable.
         </p>
-        <h2>금지 행위</h2>
+
+        <h2>3. Credits and Usage</h2>
+        <p>
+          AI generation features consume credits. Free accounts receive a
+          one-time credit grant on signup. Paid subscriptions renew monthly and
+          grant a fixed number of credits each billing cycle. Credit packs are
+          one-time purchases. Unused credits from subscriptions do not roll over
+          unless otherwise stated.
+        </p>
+
+        <h2>4. Billing and Refunds</h2>
+        <p>
+          All payments are processed in USD through Lemon Squeezy. Subscriptions
+          renew automatically until cancelled. You may cancel anytime from the
+          billing portal; access continues until the end of the current billing
+          period. Refunds for credit packs are available within 7 days of
+          purchase if no credits have been consumed. Subscription refunds are
+          handled on a case-by-case basis.
+        </p>
+
+        <h2>5. Acceptable Use</h2>
+        <p>You agree not to:</p>
         <ul>
-          <li>타인의 권리를 침해하는 콘텐츠 생성</li>
-          <li>서비스 API·결제·크레딧 시스템의 남용</li>
-          <li>무단 스크래핑 또는 자동화 공격</li>
+          <li>Generate content that infringes on others&apos; rights</li>
+          <li>Abuse, exploit, or reverse-engineer the API, payment, or credit system</li>
+          <li>Perform unauthorized scraping or automated attacks</li>
+          <li>Use the Service for any unlawful purpose</li>
         </ul>
-        <h2>면책</h2>
+
+        <h2>6. Generated Content</h2>
         <p>
-          AI 생성 결과물의 정확성·적법성·상업적 적합성은 보장되지 않으며, 최종
-          사용 책임은 사용자에게 있습니다.
+          AI-generated images are produced by third-party models. We make no
+          guarantee regarding the accuracy, legality, or commercial suitability
+          of generated content. You are solely responsible for how you use
+          generated outputs.
         </p>
+
+        <h2>7. Availability</h2>
         <p>
-          <Link href="/">홈으로</Link>
+          We strive to maintain high availability but do not guarantee
+          uninterrupted access. Scheduled maintenance and unforeseen outages may
+          occur. We are not liable for losses resulting from downtime.
+        </p>
+
+        <h2>8. Limitation of Liability</h2>
+        <p>
+          To the maximum extent permitted by law, {siteConfig.name} is provided
+          &ldquo;as is&rdquo; without warranties of any kind. Our total
+          liability shall not exceed the amounts you paid to us in the 12 months
+          preceding any claim.
+        </p>
+
+        <h2>9. Termination</h2>
+        <p>
+          We may suspend or terminate your account if you violate these terms. You
+          may delete your account at any time from the Account settings page.
+          Upon termination, your data is deleted in accordance with our Privacy
+          Policy.
+        </p>
+
+        <h2>10. Contact</h2>
+        <p>
+          Questions? Email us at{" "}
+          <a href={`mailto:${siteConfig.links.supportEmail}`}>
+            {siteConfig.links.supportEmail}
+          </a>
+          .
+        </p>
+
+        <p className="mt-8">
+          <Link href="/">Back to home</Link>
         </p>
       </main>
       <LandingFooter />

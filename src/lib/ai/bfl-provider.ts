@@ -25,7 +25,7 @@ export class BflImageProvider implements ImageGenerationProvider {
   constructor() {
     const env = getServerEnv();
     if (!hasBflKey()) {
-      throw new Error("BFL_API_KEY가 설정되지 않았습니다.");
+      throw new Error("BFL_API_KEY is not configured.");
     }
     this.apiKey = env.BFL_API_KEY;
     this.baseUrl = env.BFL_API_BASE_URL.replace(/\/$/, "");
@@ -51,11 +51,10 @@ export class BflImageProvider implements ImageGenerationProvider {
       });
 
       if (!response.ok) {
-        const text = await response.text();
         return {
           status: "failed",
           errorCode: "provider_error",
-          errorMessage: text || "FLUX 요청에 실패했습니다.",
+          errorMessage: "Generation failed.",
         };
       }
 
@@ -64,7 +63,7 @@ export class BflImageProvider implements ImageGenerationProvider {
         return {
           status: "failed",
           errorCode: "empty_response",
-          errorMessage: "FLUX 요청 ID를 받지 못했습니다.",
+          errorMessage: "Generation failed.",
         };
       }
 
@@ -72,12 +71,11 @@ export class BflImageProvider implements ImageGenerationProvider {
         status: "processing",
         providerRequestId: data.id,
       };
-    } catch (error) {
+    } catch {
       return {
         status: "failed",
         errorCode: "provider_error",
-        errorMessage:
-          error instanceof Error ? error.message : "FLUX 요청에 실패했습니다.",
+        errorMessage: "Generation failed.",
       };
     }
   }
@@ -102,11 +100,10 @@ export class BflImageProvider implements ImageGenerationProvider {
       });
 
       if (!response.ok) {
-        const text = await response.text();
         return {
           status: "failed",
           errorCode: "provider_error",
-          errorMessage: text || "FLUX 편집 요청에 실패했습니다.",
+          errorMessage: "Generation failed.",
         };
       }
 
@@ -115,7 +112,7 @@ export class BflImageProvider implements ImageGenerationProvider {
         return {
           status: "failed",
           errorCode: "empty_response",
-          errorMessage: "FLUX 요청 ID를 받지 못했습니다.",
+          errorMessage: "Generation failed.",
         };
       }
 
@@ -123,12 +120,11 @@ export class BflImageProvider implements ImageGenerationProvider {
         status: "processing",
         providerRequestId: data.id,
       };
-    } catch (error) {
+    } catch {
       return {
         status: "failed",
         errorCode: "provider_error",
-        errorMessage:
-          error instanceof Error ? error.message : "FLUX 편집에 실패했습니다.",
+        errorMessage: "Generation failed.",
       };
     }
   }
@@ -149,7 +145,7 @@ export class BflImageProvider implements ImageGenerationProvider {
         return {
           status: "failed",
           errorCode: "poll_failed",
-          errorMessage: "FLUX 상태 조회에 실패했습니다.",
+          errorMessage: "Generation failed.",
         };
       }
 
@@ -166,7 +162,7 @@ export class BflImageProvider implements ImageGenerationProvider {
           return {
             status: "failed",
             errorCode: "empty_response",
-            errorMessage: "FLUX 결과 URL이 없습니다.",
+            errorMessage: "Generation failed.",
           };
         }
         return {
@@ -190,17 +186,16 @@ export class BflImageProvider implements ImageGenerationProvider {
         return {
           status: "failed",
           errorCode: "provider_error",
-          errorMessage: data.error || "FLUX 생성이 실패했습니다.",
+          errorMessage: "Generation failed.",
         };
       }
 
       return { status: "processing" };
-    } catch (error) {
+    } catch {
       return {
         status: "failed",
         errorCode: "poll_failed",
-        errorMessage:
-          error instanceof Error ? error.message : "FLUX polling에 실패했습니다.",
+        errorMessage: "Generation failed.",
       };
     }
   }
@@ -222,7 +217,7 @@ export async function resolveProviderResultImage(
     const downloaded = await downloadHttpsImage(result.temporaryUrl);
     return normalizeImageSize(downloaded, width, height);
   }
-  throw new Error("결과 이미지가 없습니다.");
+  throw new Error("No result image available.");
 }
 
 export { aiRuntimeConfig };

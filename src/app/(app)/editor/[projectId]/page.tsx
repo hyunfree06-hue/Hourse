@@ -1,8 +1,30 @@
 import { notFound, redirect } from "next/navigation";
+import type { Metadata } from "next";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentProfile, getCurrentUser } from "@/lib/auth/session";
 import { getProviderAvailability } from "@/lib/validation/env.server";
 import { EditorShell } from "@/components/editor/editor-shell";
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ projectId: string }>;
+}): Promise<Metadata> {
+  const { projectId } = await params;
+  try {
+    const supabase = await createClient();
+    const { data } = await supabase
+      .from("projects")
+      .select("name")
+      .eq("id", projectId)
+      .maybeSingle();
+    return {
+      title: data?.name?.trim() || "Editor",
+    };
+  } catch {
+    return { title: "Editor" };
+  }
+}
 
 export default async function EditorPage({
   params,

@@ -9,9 +9,10 @@ import {
   Check,
   Loader2,
   AlertCircle,
+  WifiOff,
 } from "lucide-react";
 import { toast } from "sonner";
-import { siteConfig } from "@/config/site";
+import { editorConfig } from "@/config/editor";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -22,6 +23,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useEditorStore } from "@/stores/editor-store";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { HourseLogo } from "@/components/brand/hourse-logo";
 
 type Props = {
   projectId?: string;
@@ -42,17 +44,18 @@ export function EditorTopBar({
   const [editing, setEditing] = useState(false);
 
   function runHistory(action: "undo" | "redo") {
-    const api = (window as unknown as { __canvasai?: { history: { undo: () => void; redo: () => void } } }).__canvasai;
+    const api = (window as unknown as { __hourse?: { history: { undo: () => void; redo: () => void } } }).__hourse;
     if (!api) return;
     void (action === "undo" ? api.history.undo() : api.history.redo());
   }
 
   async function exportCanvas(format: "png" | "jpeg" | "svg") {
-    const api = (window as unknown as { __canvasai?: { canvas: { toDataURL: (o: object) => string; toSVG: () => string } } }).__canvasai;
+    const api = (window as unknown as { __hourse?: { canvas: { toDataURL: (o: object) => string; toSVG: () => string } } }).__hourse;
     if (!api) return;
     try {
       let href = "";
-      const filename = `${projectName || "design"}.${format === "jpeg" ? "jpg" : format}`;
+      const slug = projectName?.trim() || editorConfig.exportFilePrefix;
+      const filename = `${slug}.${format === "jpeg" ? "jpg" : format}`;
       if (format === "svg") {
         const blob = new Blob([api.canvas.toSVG()], { type: "image/svg+xml" });
         href = URL.createObjectURL(blob);
@@ -68,35 +71,40 @@ export function EditorTopBar({
       a.download = filename;
       a.click();
       if (format === "svg") URL.revokeObjectURL(href);
-      toast.success("내보내기가 완료되었습니다.");
+      toast.success("Export complete.");
     } catch {
-      toast.error("내보내기에 실패했습니다.");
+      toast.error("Export failed.");
     }
   }
 
   const statusLabel =
     saveStatus === "saving"
-      ? "저장 중..."
+      ? "Saving\u2026"
       : saveStatus === "saved"
-        ? "모든 변경사항이 저장됨"
+        ? "Saved"
         : saveStatus === "error"
-          ? "저장 실패 · 다시 시도"
+          ? "Save failed \u00b7 Retry"
           : saveStatus === "conflict"
-            ? "충돌 · 선택 필요"
+            ? "Offline changes pending"
             : "";
 
   return (
-    <header className="flex h-12 items-center justify-between gap-3 border-b border-neutral-200 bg-white px-3">
+    <header className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-[rgba(17,17,19,0.08)] bg-white px-3">
+      {/* Left cluster: brand + project name + save status */}
       <div className="flex min-w-0 items-center gap-3">
-        <Link href="/dashboard" className="flex items-center gap-2" aria-label="대시보드">
-          <span className="flex size-7 items-center justify-center rounded-md bg-indigo-600 text-xs font-bold text-white">
-            C
-          </span>
-          <span className="hidden text-sm font-semibold sm:inline">{siteConfig.name}</span>
+        <Link
+          href="/dashboard"
+          className="inline-flex shrink-0 items-center rounded-[6px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#635BFF]"
+          aria-label="Hourse"
+        >
+          <HourseLogo variant="mark" tone="dark" height={22} priority />
         </Link>
+
+        <div className="h-4 w-px bg-[rgba(17,17,19,0.08)]" aria-hidden />
+
         {editing ? (
           <Input
-            className="h-8 w-48"
+            className="h-7 w-48 text-sm"
             value={projectName}
             autoFocus
             onChange={(e) => setProjectName(e.target.value)}
@@ -110,37 +118,43 @@ export function EditorTopBar({
                 await onRename(projectName);
               }
             }}
-            aria-label="프로젝트 이름"
+            aria-label="Project name"
           />
         ) : (
           <button
             type="button"
-            className="truncate text-sm font-medium text-neutral-800 hover:underline"
+            className="truncate text-[13px] font-medium text-neutral-800 hover:text-neutral-900"
             onClick={() => setEditing(true)}
           >
             {projectName}
           </button>
         )}
-        <span className="hidden items-center gap-1 text-xs text-neutral-500 sm:flex" aria-live="polite">
+
+        <span className="hidden items-center gap-1.5 text-xs text-neutral-500 sm:flex" aria-live="polite">
           {saveStatus === "saving" && <Loader2 className="size-3 animate-spin" />}
           {saveStatus === "saved" && <Check className="size-3 text-emerald-600" />}
           {saveStatus === "error" && <AlertCircle className="size-3 text-red-500" />}
+          {saveStatus === "conflict" && <WifiOff className="size-3 text-amber-500" />}
           {statusLabel}
         </span>
       </div>
 
+      {/* Right cluster: undo/redo, export, credits, avatar */}
       <div className="flex items-center gap-1">
-        <Button variant="ghost" size="icon" aria-label="실행 취소" onClick={() => runHistory("undo")}>
+        <Button variant="ghost" size="icon" className="size-8" aria-label="Undo" onClick={() => runHistory("undo")}>
           <Undo2 className="size-4" />
         </Button>
-        <Button variant="ghost" size="icon" aria-label="다시 실행" onClick={() => runHistory("redo")}>
+        <Button variant="ghost" size="icon" className="size-8" aria-label="Redo" onClick={() => runHistory("redo")}>
           <Redo2 className="size-4" />
         </Button>
+
+        <div className="mx-1 h-4 w-px bg-[rgba(17,17,19,0.08)]" aria-hidden />
+
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm" aria-label="내보내기">
-              <Download className="size-4" />
-              내보내기
+            <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" aria-label="Export">
+              <Download className="size-3.5" />
+              Export
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
@@ -149,13 +163,15 @@ export function EditorTopBar({
             <DropdownMenuItem onClick={() => exportCanvas("svg")}>SVG</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        <span className="rounded-md border border-neutral-200 bg-neutral-50 px-2 py-1 text-xs font-medium">
-          크레딧 {credits}
+
+        <span className="ml-1 rounded-md border border-[rgba(17,17,19,0.08)] bg-[#F7F7F8] px-2 py-1 text-xs font-medium tabular-nums text-neutral-600">
+          {credits} credits
         </span>
-        <Link href="/account" aria-label="계정">
-          <Avatar className="size-8">
+
+        <Link href="/account" aria-label="Account" className="ml-1">
+          <Avatar className="size-7">
             <AvatarImage src={avatarUrl ?? undefined} alt="" />
-            <AvatarFallback>{(displayName ?? "U").slice(0, 1)}</AvatarFallback>
+            <AvatarFallback className="text-xs">{(displayName ?? "U").slice(0, 1)}</AvatarFallback>
           </Avatar>
         </Link>
       </div>

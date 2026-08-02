@@ -1,33 +1,44 @@
+"use client";
+
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { siteConfig } from "@/config/site";
+import { HourseLogo } from "@/components/brand/hourse-logo";
 import { GoogleAuthButton } from "@/components/auth/google-auth-button";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils/cn";
 
-const navItems = [
-  { href: "/#features", label: "기능" },
-  { href: "/#how-it-works", label: "사용 방법" },
-  { href: "/pricing", label: "요금제" },
+const landingNav = [
+  { href: "/#product", label: "Product" },
+  { href: "/#workflow", label: "Workflow" },
+  { href: "/#pricing", label: "Pricing" },
+];
+
+const appNav = [
+  { href: "/dashboard", label: "Projects" },
+  { href: "/pricing", label: "Pricing" },
+  { href: "/billing", label: "Billing" },
+  { href: "/account", label: "Account" },
 ];
 
 export function LandingHeader() {
   return (
-    <header className="sticky top-0 z-40 border-b border-neutral-200/80 bg-white/90 backdrop-blur">
-      <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
-        <Link href="/" className="flex items-center gap-2" aria-label={siteConfig.name}>
-          <span className="flex size-8 items-center justify-center rounded-md bg-indigo-600 text-sm font-bold text-white">
-            C
-          </span>
-          <span className="text-base font-semibold tracking-tight text-neutral-900">
-            {siteConfig.name}
-          </span>
+    <header className="sticky top-0 z-40 border-b border-[rgba(17,17,19,0.08)] bg-white/90 backdrop-blur-md">
+      <div className="mx-auto flex h-16 max-w-[1120px] items-center justify-between px-5">
+        <Link
+          href="/"
+          aria-label={siteConfig.name}
+          className="inline-flex items-center rounded-[6px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#635BFF]"
+        >
+          <HourseLogo variant="lockup" tone="dark" height={26} priority />
         </Link>
 
-        <nav className="hidden items-center gap-6 md:flex" aria-label="주요 메뉴">
-          {navItems.map((item) => (
+        <nav className="hidden items-center gap-7 md:flex" aria-label="Main">
+          {landingNav.map((item) => (
             <Link
               key={item.href}
               href={item.href}
-              className="text-sm text-neutral-600 transition-colors hover:text-neutral-900"
+              className="text-[13px] font-medium text-[#3F3F46] transition-colors duration-150 hover:text-[#111113]"
             >
               {item.label}
             </Link>
@@ -38,14 +49,15 @@ export function LandingHeader() {
           <GoogleAuthButton
             variant="ghost"
             size="sm"
-            label="로그인"
+            label="Sign in"
             nextPath="/dashboard"
-            className="hidden sm:inline-flex"
+            className="hidden text-[13px] font-medium text-[#3F3F46] hover:text-[#111113] sm:inline-flex"
           />
           <GoogleAuthButton
             size="sm"
-            label="무료로 시작하기"
+            label="Start free"
             nextPath="/dashboard"
+            className="rounded-[8px] bg-[#111113] text-[13px] font-medium text-white hover:bg-[#27272A]"
           />
         </div>
       </div>
@@ -55,41 +67,54 @@ export function LandingHeader() {
 
 export function LandingFooter() {
   return (
-    <footer className="border-t border-neutral-200 bg-neutral-50">
-      <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-12 sm:px-6 md:flex-row md:items-start md:justify-between">
+    <footer className="border-t border-[rgba(17,17,19,0.08)] bg-[#FAFAFA]">
+      <div className="mx-auto flex max-w-[1120px] flex-col gap-8 px-5 py-12 md:flex-row md:items-start md:justify-between">
         <div>
-          <div className="flex items-center gap-2">
-            <span className="flex size-7 items-center justify-center rounded-md bg-indigo-600 text-xs font-bold text-white">
-              C
-            </span>
-            <span className="font-semibold text-neutral-900">{siteConfig.name}</span>
-          </div>
-          <p className="mt-3 max-w-sm text-sm text-neutral-500">
-            {siteConfig.tagline}
+          <HourseLogo variant="lockup" tone="dark" height={24} decorative />
+          <p className="mt-3 max-w-xs text-[13px] leading-relaxed text-[#71717A]">
+            {siteConfig.description}
           </p>
         </div>
-        <div className="flex gap-10 text-sm">
-          <div className="flex flex-col gap-2">
-            <span className="font-medium text-neutral-900">제품</span>
-            <Link href="/#features" className="text-neutral-500 hover:text-neutral-800">
-              기능
+        <div className="flex gap-12 text-[13px]">
+          <div className="flex flex-col gap-2.5">
+            <span className="font-medium text-[#111113]">Product</span>
+            <Link
+              href="/#product"
+              className="text-[#71717A] transition-colors hover:text-[#111113]"
+            >
+              Features
             </Link>
-            <Link href="/pricing" className="text-neutral-500 hover:text-neutral-800">
-              요금제
+            <Link
+              href="/#workflow"
+              className="text-[#71717A] transition-colors hover:text-[#111113]"
+            >
+              Workflow
+            </Link>
+            <Link
+              href="/#pricing"
+              className="text-[#71717A] transition-colors hover:text-[#111113]"
+            >
+              Pricing
             </Link>
           </div>
-          <div className="flex flex-col gap-2">
-            <span className="font-medium text-neutral-900">법적 고지</span>
-            <Link href="/privacy" className="text-neutral-500 hover:text-neutral-800">
-              개인정보처리방침
+          <div className="flex flex-col gap-2.5">
+            <span className="font-medium text-[#111113]">Legal</span>
+            <Link
+              href="/privacy"
+              className="text-[#71717A] transition-colors hover:text-[#111113]"
+            >
+              Privacy Policy
             </Link>
-            <Link href="/terms" className="text-neutral-500 hover:text-neutral-800">
-              이용약관
+            <Link
+              href="/terms"
+              className="text-[#71717A] transition-colors hover:text-[#111113]"
+            >
+              Terms of Service
             </Link>
           </div>
         </div>
       </div>
-      <div className="border-t border-neutral-200 py-4 text-center text-xs text-neutral-400">
+      <div className="border-t border-[rgba(17,17,19,0.08)] py-5 text-center text-[12px] text-[#A1A1AA]">
         © {new Date().getFullYear()} {siteConfig.name}. All rights reserved.
       </div>
     </footer>
@@ -103,39 +128,59 @@ export function AppHeader({
   credits?: number;
   displayName?: string | null;
 }) {
+  const pathname = usePathname();
+
   return (
-    <header className="border-b border-neutral-200 bg-white">
-      <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
-        <div className="flex items-center gap-6">
-          <Link href="/dashboard" className="flex items-center gap-2">
-            <span className="flex size-7 items-center justify-center rounded-md bg-indigo-600 text-xs font-bold text-white">
-              C
+    <header className="border-b border-[rgba(17,17,19,0.08)] bg-white">
+      <div className="mx-auto flex h-14 max-w-[1120px] items-center justify-between px-5">
+        <div className="flex items-center gap-7">
+          <Link
+            href="/dashboard"
+            aria-label={siteConfig.name}
+            className="inline-flex items-center rounded-[6px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#635BFF]"
+          >
+            <span className="hidden sm:inline-flex">
+              <HourseLogo variant="lockup" tone="dark" height={24} priority />
             </span>
-            <span className="font-semibold text-neutral-900">{siteConfig.name}</span>
+            <span className="inline-flex sm:hidden">
+              <HourseLogo variant="mark" tone="dark" height={22} priority />
+            </span>
           </Link>
-          <nav className="hidden gap-4 text-sm md:flex">
-            <Link href="/dashboard" className="text-neutral-600 hover:text-neutral-900">
-              프로젝트
-            </Link>
-            <Link href="/pricing" className="text-neutral-600 hover:text-neutral-900">
-              요금제
-            </Link>
-            <Link href="/billing" className="text-neutral-600 hover:text-neutral-900">
-              결제
-            </Link>
-            <Link href="/account" className="text-neutral-600 hover:text-neutral-900">
-              계정
-            </Link>
+          <nav className="hidden items-center gap-1 text-[13px] md:flex">
+            {appNav.map((item) => {
+              const active =
+                pathname === item.href ||
+                (item.href !== "/dashboard" && pathname.startsWith(item.href));
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={cn(
+                    "rounded-[6px] px-2.5 py-1.5 font-medium transition-colors duration-150",
+                    active
+                      ? "bg-[#F1F0FF] text-[#554EDB]"
+                      : "text-[#3F3F46] hover:bg-[#F7F7F8] hover:text-[#111113]",
+                  )}
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
           </nav>
         </div>
         <div className="flex items-center gap-3">
           {typeof credits === "number" && (
-            <span className="rounded-md border border-neutral-200 bg-neutral-50 px-2.5 py-1 text-xs font-medium text-neutral-700">
-              크레딧 {credits}
+            <span className="tabular-nums rounded-[6px] border border-[rgba(17,17,19,0.08)] bg-[#FAFAFA] px-2.5 py-1 text-[12px] font-medium text-[#3F3F46]">
+              {credits} credits
             </span>
           )}
-          <Button asChild variant="outline" size="sm">
-            <Link href="/account">{displayName ?? "계정"}</Link>
+          <Button
+            asChild
+            variant="outline"
+            size="sm"
+            className="rounded-[8px] text-[13px]"
+          >
+            <Link href="/account">{displayName ?? "Account"}</Link>
           </Button>
         </div>
       </div>

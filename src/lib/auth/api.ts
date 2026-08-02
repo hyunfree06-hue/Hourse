@@ -15,7 +15,7 @@ export async function requireApiUser(): Promise<
     if (error || !user) {
       return {
         error: NextResponse.json(
-          { error: { code: "unauthorized", message: "로그인이 필요합니다." } },
+          { error: { code: "unauthorized", message: "Authentication required" } },
           { status: 401 },
         ),
       };
@@ -28,7 +28,7 @@ export async function requireApiUser(): Promise<
         {
           error: {
             code: "auth_config_missing",
-            message: "인증 설정이 완료되지 않았습니다.",
+            message: "Authentication is not configured",
           },
         },
         { status: 503 },

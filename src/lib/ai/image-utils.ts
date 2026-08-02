@@ -22,7 +22,7 @@ export async function validateImageBuffer(buffer: Buffer): Promise<{
 }> {
   const meta = await sharp(buffer).metadata();
   if (!meta.width || !meta.height) {
-    throw new AppError("invalid_image", "유효하지 않은 이미지입니다.", 400);
+    throw new AppError("invalid_image", "Invalid image.", 400);
   }
   const format = meta.format;
   const mime =
@@ -39,11 +39,11 @@ export async function downloadHttpsImage(url: string): Promise<Buffer> {
   try {
     parsed = new URL(url);
   } catch {
-    throw new AppError("invalid_url", "잘못된 이미지 URL입니다.", 400);
+    throw new AppError("invalid_url", "Invalid image URL.", 400);
   }
 
   if (parsed.protocol !== "https:") {
-    throw new AppError("insecure_url", "HTTPS 이미지만 다운로드할 수 있습니다.", 400);
+    throw new AppError("insecure_url", "Only HTTPS images can be downloaded.", 400);
   }
 
   const controller = new AbortController();
@@ -58,7 +58,7 @@ export async function downloadHttpsImage(url: string): Promise<Buffer> {
     if (!response.ok) {
       throw new AppError(
         "download_failed",
-        "결과 이미지를 다운로드하지 못했습니다.",
+        "Unable to download the result image.",
         502,
       );
     }
@@ -71,7 +71,7 @@ export async function downloadHttpsImage(url: string): Promise<Buffer> {
     ) {
       throw new AppError(
         "invalid_content_type",
-        "이미지 Content-Type이 아닙니다.",
+        "Response is not an image.",
         400,
       );
     }
@@ -81,12 +81,12 @@ export async function downloadHttpsImage(url: string): Promise<Buffer> {
       lengthHeader &&
       Number(lengthHeader) > aiRuntimeConfig.maxDownloadBytes
     ) {
-      throw new AppError("file_too_large", "이미지 파일이 너무 큽니다.", 400);
+      throw new AppError("file_too_large", "Image file is too large.", 400);
     }
 
     const arrayBuffer = await response.arrayBuffer();
     if (arrayBuffer.byteLength > aiRuntimeConfig.maxDownloadBytes) {
-      throw new AppError("file_too_large", "이미지 파일이 너무 큽니다.", 400);
+      throw new AppError("file_too_large", "Image file is too large.", 400);
     }
 
     return Buffer.from(arrayBuffer);

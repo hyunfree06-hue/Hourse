@@ -19,7 +19,7 @@ export async function GET(request: Request) {
       );
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "인증 처리에 실패했습니다.";
+        error instanceof Error ? error.message : "Unable to complete authentication.";
       return NextResponse.redirect(
         `${origin}/auth/error?message=${encodeURIComponent(message)}`,
       );
@@ -27,6 +27,6 @@ export async function GET(request: Request) {
   }
 
   return NextResponse.redirect(
-    `${origin}/auth/error?message=${encodeURIComponent("인증 코드가 없습니다.")}`,
+    `${origin}/auth/error?message=${encodeURIComponent("Missing authentication code.")}`,
   );
 }

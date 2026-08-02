@@ -34,7 +34,7 @@ export const billingPlans: BillingPlan[] = [
     code: "free",
     checkoutCode: null,
     name: "Free",
-    description: "개인 디자이너를 위한 시작 플랜",
+    description: "Start creating with a focused personal workspace.",
     productName: null,
     variantName: null,
     billingType: "free",
@@ -45,18 +45,18 @@ export const billingPlans: BillingPlan[] = [
     planCode: "free",
     variantEnvKey: null,
     features: [
-      "가입 시 10 크레딧",
-      "무제한 개인 프로젝트",
-      "PNG · JPG · SVG 내보내기",
-      "자동 저장",
+      "10 credits on signup",
+      "Unlimited personal projects",
+      "PNG, JPG, and SVG export",
+      "Autosave",
     ],
   },
   {
     code: "creator_monthly",
     checkoutCode: "creator",
     name: "Creator",
-    description: "꾸준히 AI로 작업하는 디자이너용",
-    productName: "CanvasAI Creator",
+    description: "For creators who generate and refine on a steady rhythm.",
+    productName: "Hourse Creator",
     variantName: "Creator Monthly",
     billingType: "subscription",
     billingInterval: "month",
@@ -67,18 +67,18 @@ export const billingPlans: BillingPlan[] = [
     variantEnvKey: "LEMONSQUEEZY_VARIANT_CREATOR_MONTHLY",
     highlighted: true,
     features: [
-      "매월 100 크레딧",
-      "OpenAI · FLUX 모두 사용",
-      "우선 생성 큐",
-      "이메일 지원",
+      "100 credits every month",
+      "Access to leading image models",
+      "Priority generation queue",
+      "Email support",
     ],
   },
   {
     code: "pro_monthly",
     checkoutCode: "pro",
     name: "Pro",
-    description: "고품질 생성을 자주 사용하는 경우",
-    productName: "CanvasAI Pro",
+    description: "For frequent, high-finish visual work.",
+    productName: "Hourse Pro",
     variantName: "Pro Monthly",
     billingType: "subscription",
     billingInterval: "month",
@@ -88,18 +88,18 @@ export const billingPlans: BillingPlan[] = [
     planCode: "pro",
     variantEnvKey: "LEMONSQUEEZY_VARIANT_PRO_MONTHLY",
     features: [
-      "매월 300 크레딧",
-      "고품질 생성 우선",
-      "대용량 업로드",
-      "우선 지원",
+      "300 credits every month",
+      "Priority for high-quality runs",
+      "Larger asset uploads",
+      "Priority support",
     ],
   },
   {
     code: "credit_pack",
     checkoutCode: "credit_pack",
     name: "Credit Pack 50",
-    description: "필요할 때 한 번에 충전",
-    productName: "CanvasAI Credit Pack",
+    description: "Top up when you need more runway.",
+    productName: "Hourse Credit Pack",
     variantName: "50 Credits",
     billingType: "credit_pack",
     billingInterval: null,
@@ -108,7 +108,11 @@ export const billingPlans: BillingPlan[] = [
     credits: 50,
     planCode: null,
     variantEnvKey: "LEMONSQUEEZY_VARIANT_CREDIT_PACK",
-    features: ["50 크레딧 추가", "구독 없이 사용", "만료 없음"],
+    features: [
+      "50 additional credits",
+      "No subscription required",
+      "Credits do not expire",
+    ],
   },
 ];
 
@@ -126,10 +130,7 @@ export function getPlanByCheckoutCode(
 }
 
 export function getProductByCode(code: string): BillingPlan | undefined {
-  return (
-    getPlanByCheckoutCode(code) ??
-    getPlanByCode(code)
-  );
+  return getPlanByCheckoutCode(code) ?? getPlanByCode(code);
 }
 
 export function getVariantIdForProduct(product: BillingPlan): string | null {
@@ -155,20 +156,16 @@ export function formatPlanPrice(plan: BillingPlan): string {
   if (plan.billingType === "credit_pack") {
     return formatUsdFromCents(plan.priceAmountCents);
   }
-  // $19 / $49 — trim trailing .00 for whole dollars
   return formatUsdFromCents(plan.priceAmountCents, { trimZeroCents: true });
 }
 
 export function formatPlanPriceLabel(plan: BillingPlan): string {
-  if (plan.billingType === "free") return "무료";
-  if (plan.billingInterval === "month") return "/월";
-  return "일회성 결제";
+  if (plan.billingType === "free") return "Free";
+  if (plan.billingInterval === "month") return "/month";
+  return "one-time";
 }
 
 export function getPlanDisplayPrice(plan: BillingPlan): string {
   if (plan.billingType === "free") return "$0";
-  if (plan.billingInterval === "month") {
-    return `${formatPlanPrice(plan)}`;
-  }
   return formatPlanPrice(plan);
 }

@@ -21,8 +21,8 @@ const FabricCanvas = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="flex h-full items-center justify-center bg-[#F5F5F5] text-sm text-neutral-500">
-        캔버스 로딩 중...
+      <div className="flex h-full items-center justify-center bg-[#F7F7F8] text-sm text-neutral-400">
+        Loading canvas&hellip;
       </div>
     ),
   },
@@ -72,10 +72,10 @@ export function EditorShell({ project, profile, availability }: Props) {
   useEffect(() => {
     const onError = (e: Event) => {
       const detail = (e as CustomEvent<string>).detail;
-      setLoadError(detail || "캔버스 로딩 실패");
+      setLoadError(detail || "Failed to load canvas");
     };
-    window.addEventListener("canvasai:load-error", onError);
-    return () => window.removeEventListener("canvasai:load-error", onError);
+    window.addEventListener("hourse:load-error", onError);
+    return () => window.removeEventListener("hourse:load-error", onError);
   }, []);
 
   async function onRename(name: string) {
@@ -84,7 +84,7 @@ export function EditorShell({ project, profile, availability }: Props) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
     });
-    if (!res.ok) toast.error("이름 변경에 실패했습니다.");
+    if (!res.ok) toast.error("Failed to rename project.");
   }
 
   async function onUploadImage() {
@@ -98,15 +98,15 @@ export function EditorShell({ project, profile, availability }: Props) {
     const res = await fetch("/api/assets/upload", { method: "POST", body: form });
     const data = await res.json();
     if (!res.ok) {
-      toast.error(data.error?.message ?? "업로드에 실패했습니다.");
+      toast.error(data.error?.message ?? "Upload failed.");
       return;
     }
     const mod = await import("@/components/editor/canvas/fabric-canvas");
     const api = (
       window as unknown as {
-        __canvasai?: { canvas: import("fabric").Canvas };
+        __hourse?: { canvas: import("fabric").Canvas };
       }
-    ).__canvasai;
+    ).__hourse;
     if (api && data.signedUrl) {
       await mod.addImageToCanvas(api.canvas, data.signedUrl, {
         assetId: data.asset?.id,
@@ -116,7 +116,7 @@ export function EditorShell({ project, profile, availability }: Props) {
 
   if (isMobilePreview) {
     return (
-      <div className="flex min-h-screen flex-col bg-neutral-50">
+      <div className="flex min-h-screen flex-col bg-[#F7F7F8]">
         <EditorTopBar
           projectId={project.id}
           avatarUrl={profile.avatar_url}
@@ -125,19 +125,18 @@ export function EditorShell({ project, profile, availability }: Props) {
         />
         <div className="mx-auto flex max-w-lg flex-1 flex-col justify-center px-6 py-12 text-center">
           <h1 className="text-xl font-semibold text-neutral-900">
-            정밀 편집은 데스크톱 환경을 권장합니다
+            Hourse works best on desktop.
           </h1>
-          <p className="mt-3 text-sm text-neutral-600">
-            모바일에서는 프로젝트 미리보기만 제공합니다. 도형·AI 영역 등 편집
-            도구는 더 넓은 화면에서 사용해 주세요.
+          <p className="mt-3 text-sm leading-relaxed text-neutral-600">
+            Open this project on a larger screen for precise editing.
           </p>
-          <div className="mt-8 overflow-hidden rounded-lg border border-neutral-200 bg-[#F5F5F5]">
+          <div className="mt-8 overflow-hidden rounded-lg border border-[rgba(17,17,19,0.08)] bg-[#F7F7F8]">
             <div className="flex aspect-[16/10] items-center justify-center text-xs text-neutral-400">
-              {project.name} 미리보기
+              {project.name}
             </div>
           </div>
           <Button className="mt-6" onClick={() => setIsMobilePreview(false)}>
-            그래도 에디터 열기
+            Open editor anyway
           </Button>
         </div>
       </div>
@@ -156,9 +155,9 @@ export function EditorShell({ project, profile, availability }: Props) {
         <LeftToolbar onUploadImage={onUploadImage} />
         <div className="relative min-w-0 flex-1">
           {loadError ? (
-            <div className="flex h-full flex-col items-center justify-center gap-3 bg-[#F5F5F5]">
+            <div className="flex h-full flex-col items-center justify-center gap-3 bg-[#F7F7F8]">
               <p className="text-sm text-red-600">{loadError}</p>
-              <Button onClick={() => window.location.reload()}>다시 시도</Button>
+              <Button onClick={() => window.location.reload()}>Retry</Button>
             </div>
           ) : (
             <FabricCanvas

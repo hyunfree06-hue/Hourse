@@ -34,7 +34,7 @@ async function checkRateLimit(userId: string): Promise<void> {
   if ((count ?? 0) >= aiRuntimeConfig.rateLimitPerMinute) {
     throw new AppError(
       "rate_limited",
-      "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.",
+      "Too many requests. Please try again in a moment.",
       429,
     );
   }
@@ -62,14 +62,14 @@ export async function POST(req: Request) {
       .maybeSingle();
 
     if (!project) {
-      throw new AppError("not_found", "프로젝트를 찾을 수 없습니다.", 404);
+      throw new AppError("not_found", "Project not found", 404);
     }
 
     const availability = getProviderAvailability();
     if (!availability[input.provider]) {
       throw new AppError(
         "provider_unavailable",
-        "서버에 API 키가 설정되지 않았습니다.",
+        "Image generation is temporarily unavailable.",
         503,
       );
     }
@@ -129,7 +129,7 @@ export async function POST(req: Request) {
           .single();
         return NextResponse.json({ generation: again });
       }
-      throw new AppError("create_failed", "생성 요청을 저장하지 못했습니다.", 500);
+      throw new AppError("create_failed", "Unable to save generation request.", 500);
     }
 
     generationId = generation.id;
@@ -189,7 +189,7 @@ export async function POST(req: Request) {
       if (!referenceBuffer) {
         throw new AppError(
           "reference_required",
-          "영역 교체/참조 모드에는 참조 이미지가 필요합니다.",
+          "A reference image is required for edit or replace mode.",
           400,
         );
       }
@@ -260,7 +260,7 @@ export async function POST(req: Request) {
         amount: cost,
         errorCode: providerResult.errorCode ?? "provider_error",
         errorMessage:
-          providerResult.errorMessage ?? "이미지 생성에 실패했습니다.",
+          providerResult.errorMessage ?? "Generation failed. Your credits were restored.",
       });
       const { data: failed } = await admin
         .from("ai_generations")
@@ -303,7 +303,7 @@ export async function POST(req: Request) {
           errorMessage:
             error instanceof Error
               ? error.message
-              : "생성 요청 처리 중 오류가 발생했습니다.",
+              : "Generation failed. Your credits were restored.",
         });
       } catch {
         // best effort

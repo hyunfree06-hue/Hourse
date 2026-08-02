@@ -24,7 +24,7 @@ export async function POST(
       .maybeSingle();
 
     if (!generation) {
-      throw new AppError("not_found", "생성 요청을 찾을 수 없습니다.", 404);
+      throw new AppError("not_found", "Generation not found", 404);
     }
 
     if (
@@ -41,7 +41,7 @@ export async function POST(
         status: "cancelled",
         completed_at: new Date().toISOString(),
         error_code: "cancelled",
-        error_message: "사용자가 생성을 취소했습니다.",
+        error_message: "Generation cancelled.",
       })
       .eq("id", generationId);
 

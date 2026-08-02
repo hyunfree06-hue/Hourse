@@ -69,7 +69,7 @@ export const useEditorStore = create<EditorStore>((set) => ({
   aiRegion: null,
   aiPanelOpen: false,
   credits: 0,
-  projectName: "제목 없는 디자인",
+  projectName: "Untitled project",
   backgroundColor: "#ffffff",
   isMobilePreview: false,
   setTool: (tool) => set({ tool }),

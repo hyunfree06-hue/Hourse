@@ -56,7 +56,7 @@ export async function completeGeneration(input: {
     .upload(path, buffer, { contentType: "image/png", upsert: false });
 
   if (uploadError) {
-    throw new AppError("upload_failed", "결과 이미지 저장에 실패했습니다.", 500);
+    throw new AppError("upload_failed", "Unable to save the result image.", 500);
   }
 
   const { data: asset, error: assetError } = await input.admin
@@ -76,7 +76,7 @@ export async function completeGeneration(input: {
     .single();
 
   if (assetError || !asset) {
-    throw new AppError("asset_failed", "에셋 기록에 실패했습니다.", 500);
+    throw new AppError("asset_failed", "Unable to save asset record.", 500);
   }
 
   const { data: signed } = await input.admin.storage

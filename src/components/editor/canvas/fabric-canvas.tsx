@@ -127,7 +127,7 @@ export function FabricCanvas({
     const onModified = () => {
       historyRef.current.save();
       syncSelection();
-      window.dispatchEvent(new CustomEvent("canvasai:dirty"));
+      window.dispatchEvent(new CustomEvent("hourse:dirty"));
     };
 
     canvas.on("selection:created", syncSelection);
@@ -135,10 +135,10 @@ export function FabricCanvas({
     canvas.on("selection:cleared", () => setSelected(null));
     canvas.on("object:modified", onModified);
     canvas.on("object:added", () => {
-      window.dispatchEvent(new CustomEvent("canvasai:dirty"));
+      window.dispatchEvent(new CustomEvent("hourse:dirty"));
     });
     canvas.on("object:removed", () => {
-      window.dispatchEvent(new CustomEvent("canvasai:dirty"));
+      window.dispatchEvent(new CustomEvent("hourse:dirty"));
     });
 
     const getPointer = (e: MouseEvent | TouchEvent | { clientX?: number; clientY?: number }) => {
@@ -184,7 +184,7 @@ export function FabricCanvas({
             stroke: currentTool === "frame" ? "#a3a3a3" : "#4338ca",
             strokeWidth: currentTool === "frame" ? 1 : 0,
             objectRole: "design",
-            name: currentTool === "frame" ? "프레임" : "사각형",
+            name: currentTool === "frame" ? "Frame" : "Rectangle",
           }),
         );
         canvas.add(rect);
@@ -199,7 +199,7 @@ export function FabricCanvas({
             stroke: "#6d28d9",
             strokeWidth: 0,
             objectRole: "design",
-            name: "원",
+            name: "Ellipse",
           }),
         );
         canvas.add(circle);
@@ -210,13 +210,13 @@ export function FabricCanvas({
             stroke: "#171717",
             strokeWidth: 2,
             objectRole: "design",
-            name: "선",
+            name: "Line",
           }),
         });
         canvas.add(line);
         drawingRef.current.object = line;
       } else if (currentTool === "text") {
-        const text = new IText("텍스트", {
+        const text = new IText("Text", {
           ...withCustomDefaults({
             left: pointer.x,
             top: pointer.y,
@@ -224,7 +224,7 @@ export function FabricCanvas({
             fontSize: 28,
             fontFamily: "Inter, sans-serif",
             objectRole: "design",
-            name: "텍스트",
+            name: "Text",
           }),
         });
         canvas.add(text);
@@ -232,7 +232,7 @@ export function FabricCanvas({
         drawingRef.current.active = false;
         historyRef.current.save();
         setTool("select");
-        window.dispatchEvent(new CustomEvent("canvasai:dirty"));
+        window.dispatchEvent(new CustomEvent("hourse:dirty"));
       } else if (currentTool === "ai-region") {
         const region = new Rect(
           withCustomDefaults({
@@ -245,7 +245,7 @@ export function FabricCanvas({
             strokeDashArray: [6, 4],
             strokeWidth: 1.5,
             objectRole: "ai-region",
-            name: "AI 영역",
+            name: "AI region",
             excludeFromExport: true,
           }),
         );
@@ -315,7 +315,7 @@ export function FabricCanvas({
           setTool("select");
         }
         historyRef.current.save();
-        window.dispatchEvent(new CustomEvent("canvasai:dirty"));
+        window.dispatchEvent(new CustomEvent("hourse:dirty"));
       }
       drawingRef.current = {
         active: false,
@@ -354,8 +354,8 @@ export function FabricCanvas({
       } catch (error) {
         console.error("canvas load failed", error);
         window.dispatchEvent(
-          new CustomEvent("canvasai:load-error", {
-            detail: "캔버스를 불러오지 못했습니다.",
+          new CustomEvent("hourse:load-error", {
+            detail: "Failed to load canvas.",
           }),
         );
       }
@@ -389,7 +389,7 @@ export function FabricCanvas({
         canvas.discardActiveObject();
         canvas.requestRenderAll();
         historyRef.current.save();
-        window.dispatchEvent(new CustomEvent("canvasai:dirty"));
+        window.dispatchEvent(new CustomEvent("hourse:dirty"));
       }
       if (meta && e.key.toLowerCase() === "z" && !e.shiftKey) {
         e.preventDefault();
@@ -425,7 +425,7 @@ export function FabricCanvas({
           canvas.setActiveObject(cloned);
           canvas.requestRenderAll();
           historyRef.current.save();
-          window.dispatchEvent(new CustomEvent("canvasai:dirty"));
+          window.dispatchEvent(new CustomEvent("hourse:dirty"));
         });
       }
       if (meta && e.key.toLowerCase() === "d") {
@@ -442,12 +442,12 @@ export function FabricCanvas({
           canvas.setActiveObject(cloned);
           canvas.requestRenderAll();
           historyRef.current.save();
-          window.dispatchEvent(new CustomEvent("canvasai:dirty"));
+          window.dispatchEvent(new CustomEvent("hourse:dirty"));
         });
       }
       if (meta && e.key.toLowerCase() === "s") {
         e.preventDefault();
-        window.dispatchEvent(new CustomEvent("canvasai:force-save"));
+        window.dispatchEvent(new CustomEvent("hourse:force-save"));
       }
       if (e.key === "+" || e.key === "=") {
         const zoom = Math.min(editorConfig.maxZoom, canvas.getZoom() + editorConfig.zoomStep);
@@ -472,7 +472,7 @@ export function FabricCanvas({
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
 
-    (window as unknown as { __canvasai?: { canvas: Canvas; history: typeof historyRef.current; projectId: string } }).__canvasai = {
+    (window as unknown as { __hourse?: { canvas: Canvas; history: typeof historyRef.current; projectId: string } }).__hourse = {
       canvas,
       history: historyRef.current,
       projectId,
@@ -491,7 +491,7 @@ export function FabricCanvas({
       canvas.off("mouse:wheel", onWheel);
       canvas.dispose();
       canvasRef.current = null;
-      delete (window as unknown as { __canvasai?: unknown }).__canvasai;
+      delete (window as unknown as { __hourse?: unknown }).__hourse;
       void disposed;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -551,11 +551,11 @@ export async function addImageToCanvas(
       top: options?.top ?? 100,
       objectRole: "design",
       assetId: options?.assetId,
-      name: "이미지",
+      name: "Image",
     }),
   );
   canvas.add(img);
   canvas.setActiveObject(img);
   canvas.requestRenderAll();
-  window.dispatchEvent(new CustomEvent("canvasai:dirty"));
+  window.dispatchEvent(new CustomEvent("hourse:dirty"));
 }

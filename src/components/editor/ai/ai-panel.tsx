@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { FabricImage, Rect } from "fabric";
 import { nanoid } from "nanoid";
 import { toast } from "sonner";
+import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -22,10 +23,11 @@ import { aspectRatioLabel } from "@/lib/utils/geometry";
 
 type Availability = { openai: boolean; bfl: boolean };
 
-const EXAMPLES = [
-  "미니멀한 앱 온보딩 일러스트, 플랫 스타일, 밝은 배경",
-  "제품 히어로용 추상 그라데이션 배경, 부드러운 조명",
-  "모바일 UI 목업 속 대시보드 카드, 깔끔한 SaaS 스타일",
+const PROMPT_CHIPS = [
+  "Editorial poster",
+  "Soft 3D icon",
+  "Abstract gradient",
+  "Product still life",
 ];
 
 type Props = {
@@ -62,7 +64,7 @@ export function AiPanel({ projectId, availability }: Props) {
 
   useEffect(() => {
     if (!availability[provider]) {
-      // do not auto-switch; keep selected but disabled generate
+      // keep selected but disable generate
     }
   }, [availability, provider]);
 
@@ -71,14 +73,14 @@ export function AiPanel({ projectId, availability }: Props) {
   async function captureRegionPng(): Promise<string | null> {
     const api = (
       window as unknown as {
-        __canvasai?: {
+        __hourse?: {
           canvas: {
             toDataURL: (o: object) => string;
             getObjects: () => Array<{ objectRole?: string; visible?: boolean }>;
           };
         };
       }
-    ).__canvasai;
+    ).__hourse;
     if (!api || !aiRegion) return null;
     const hidden: Array<{ obj: { visible?: boolean }; prev: boolean }> = [];
     api.canvas.getObjects().forEach((obj) => {
@@ -106,7 +108,7 @@ export function AiPanel({ projectId, availability }: Props) {
       const res = await fetch(`/api/ai/generations/${id}`);
       const data = await res.json();
       const gen = data.generation;
-      if (!gen) throw new Error("생성 상태를 확인할 수 없습니다.");
+      if (!gen) throw new Error("Unable to check generation status.");
       setStatus(gen.status);
       if (gen.status === "completed") {
         return gen as {
@@ -116,11 +118,11 @@ export function AiPanel({ projectId, availability }: Props) {
         };
       }
       if (gen.status === "failed" || gen.status === "cancelled") {
-        throw new Error(gen.error_message || "생성에 실패했습니다.");
+        throw new Error(gen.error_message || "Generation failed.");
       }
       await new Promise((r) => setTimeout(r, 2000));
     }
-    throw new Error("생성 시간이 초과되었습니다.");
+    throw new Error("Generation timed out.");
   }
 
   async function placeResult(gen: {
@@ -130,7 +132,7 @@ export function AiPanel({ projectId, availability }: Props) {
   }) {
     const api = (
       window as unknown as {
-        __canvasai?: {
+        __hourse?: {
           canvas: {
             add: (o: unknown) => void;
             remove: (o: unknown) => void;
@@ -145,7 +147,7 @@ export function AiPanel({ projectId, availability }: Props) {
           history: { save: () => void };
         };
       }
-    ).__canvasai;
+    ).__hourse;
     if (!api || !aiRegion || !gen.signedUrl) return;
 
     api.history.save();
@@ -166,7 +168,7 @@ export function AiPanel({ projectId, availability }: Props) {
         generatedBy: provider,
         generationId: gen.id,
         assetId: gen.output_asset_id,
-        name: "AI 생성 이미지",
+        name: "Generated image",
         clipPath: new Rect({
           left: aiRegion.left,
           top: aiRegion.top,
@@ -180,20 +182,20 @@ export function AiPanel({ projectId, availability }: Props) {
     api.canvas.setActiveObject(img);
     api.canvas.requestRenderAll();
     api.history.save();
-    window.dispatchEvent(new CustomEvent("canvasai:dirty"));
+    window.dispatchEvent(new CustomEvent("hourse:dirty"));
   }
 
   async function handleGenerate() {
     if (!aiRegion) {
-      setError("AI 영역을 먼저 지정해 주세요.");
+      setError("Draw an AI region on the canvas first.");
       return;
     }
     if (!availability[provider]) {
-      setError("서버에 API 키가 설정되지 않았습니다.");
+      setError("API key not configured on the server.");
       return;
     }
     if (credits < cost) {
-      setError("크레딧이 부족합니다. 요금제 또는 크레딧 팩을 확인해 주세요.");
+      setError("Not enough credits. Check your plan or purchase a credit pack.");
       return;
     }
 
@@ -225,7 +227,7 @@ export function AiPanel({ projectId, availability }: Props) {
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error?.message ?? "생성 요청에 실패했습니다.");
+        throw new Error(data.error?.message ?? "Generation request failed.");
       }
 
       const gen = data.generation;
@@ -248,14 +250,13 @@ export function AiPanel({ projectId, availability }: Props) {
       setHistory((prev) =>
         prev.map((h) => (h.id === gen.id ? { ...h, status: "completed" } : h)),
       );
-      toast.success("이미지가 생성되었습니다.");
+      toast.success("Image generated successfully.");
     } catch (err) {
       const message =
-        err instanceof Error ? err.message : "생성에 실패했습니다.";
+        err instanceof Error ? err.message : "Generation failed.";
       setError(message);
       setStatus("failed");
       toast.error(message);
-      // refresh credits from server ideally; optimistic revert
       setCredits(credits);
     } finally {
       setLoading(false);
@@ -272,147 +273,166 @@ export function AiPanel({ projectId, availability }: Props) {
   }
 
   return (
-    <div className="absolute bottom-14 right-4 z-20 w-[360px] rounded-lg border border-neutral-200 bg-white p-4 shadow-lg">
-      <div className="mb-3 flex items-start justify-between gap-2">
+    <div className="absolute bottom-14 right-4 z-20 w-[360px] rounded-xl border border-[rgba(17,17,19,0.08)] bg-white shadow-xl">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-[rgba(17,17,19,0.08)] px-4 py-3">
         <div>
-          <h2 className="text-sm font-semibold text-neutral-900">AI 생성</h2>
+          <h2 className="text-sm font-semibold text-neutral-900">Generate</h2>
           {aiRegion ? (
-            <p className="mt-1 text-xs text-neutral-500">
-              {Math.round(aiRegion.width)}×{Math.round(aiRegion.height)} ·{" "}
+            <p className="mt-0.5 text-[11px] text-neutral-500">
+              {Math.round(aiRegion.width)}&times;{Math.round(aiRegion.height)} &middot;{" "}
               {aspectRatioLabel(aiRegion.width, aiRegion.height)}
             </p>
           ) : (
-            <p className="mt-1 text-xs text-amber-600">영역을 드래그해 지정하세요</p>
+            <p className="mt-0.5 text-[11px] text-amber-600">Drag an area on the canvas</p>
           )}
         </div>
-        <Button variant="ghost" size="sm" onClick={() => setAiPanelOpen(false)}>
-          닫기
-        </Button>
-      </div>
-
-      <Label htmlFor="prompt">프롬프트</Label>
-      <Textarea
-        id="prompt"
-        className="mt-1"
-        rows={4}
-        value={prompt}
-        onChange={(e) => setPrompt(e.target.value)}
-        placeholder="원하는 디자인을 설명해 주세요"
-        maxLength={2000}
-      />
-      <div className="mt-2 flex flex-wrap gap-1">
-        {EXAMPLES.map((ex) => (
-          <button
-            key={ex}
-            type="button"
-            className="rounded border border-neutral-200 px-2 py-1 text-[11px] text-neutral-600 hover:bg-neutral-50"
-            onClick={() => setPrompt(ex)}
-          >
-            예시
-          </button>
-        ))}
-      </div>
-
-      <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-        <div>
-          <Label>Provider</Label>
-          <select
-            className="mt-1 h-9 w-full rounded-md border border-neutral-300 px-2"
-            value={provider}
-            onChange={(e) => setProvider(e.target.value as AiProviderId)}
-          >
-            {(["openai", "bfl"] as AiProviderId[]).map((id) => (
-              <option key={id} value={id} disabled={!availability[id]}>
-                {PROVIDER_LABELS[id]}
-                {!availability[id] ? " (미설정)" : ""}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <Label>모드</Label>
-          <select
-            className="mt-1 h-9 w-full rounded-md border border-neutral-300 px-2"
-            value={mode}
-            onChange={(e) => setMode(e.target.value as AiMode)}
-          >
-            <option value="generate">{MODE_LABELS.generate}</option>
-            <option value="replace">{MODE_LABELS.replace}</option>
-            <option value="edit">{MODE_LABELS.edit}</option>
-          </select>
-        </div>
-        <div>
-          <Label>품질</Label>
-          <select
-            className="mt-1 h-9 w-full rounded-md border border-neutral-300 px-2"
-            value={quality}
-            onChange={(e) => setQuality(e.target.value as AiQuality)}
-          >
-            {(Object.keys(QUALITY_LABELS) as AiQuality[]).map((q) => (
-              <option key={q} value={q}>
-                {QUALITY_LABELS[q]}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <Label>맞춤</Label>
-          <select
-            className="mt-1 h-9 w-full rounded-md border border-neutral-300 px-2"
-            value={fit}
-            onChange={(e) => setFit(e.target.value as "cover" | "contain")}
-          >
-            <option value="cover">Cover</option>
-            <option value="contain">Contain</option>
-          </select>
-        </div>
-      </div>
-
-      {!availability[provider] && (
-        <p className="mt-3 text-xs text-amber-700">
-          서버에 API 키가 설정되지 않았습니다.
-        </p>
-      )}
-
-      <div className="mt-3 flex items-center justify-between text-xs text-neutral-600">
-        <span>예상 {cost} 크레딧</span>
-        <span>잔여 {credits}</span>
-      </div>
-
-      {status && (
-        <p className="mt-2 text-xs text-neutral-500" aria-live="polite">
-          상태: {status}
-        </p>
-      )}
-      {error && (
-        <p className="mt-2 text-xs text-red-600" role="alert">
-          {error}
-        </p>
-      )}
-
-      <div className="mt-3 flex gap-2">
-        <Button
-          className="flex-1"
-          loading={loading}
-          disabled={!prompt.trim() || !availability[provider]}
-          onClick={handleGenerate}
+        <button
+          type="button"
+          onClick={() => setAiPanelOpen(false)}
+          className="flex size-7 items-center justify-center rounded-md text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600"
+          aria-label="Close"
         >
-          생성
-        </Button>
-        {loading && (
-          <Button variant="outline" onClick={handleCancel}>
-            취소
-          </Button>
-        )}
+          <X className="size-4" />
+        </button>
       </div>
 
+      <div className="space-y-3 px-4 py-3">
+        {/* Prompt */}
+        <div>
+          <Label htmlFor="prompt" className="text-xs text-neutral-600">Prompt</Label>
+          <Textarea
+            id="prompt"
+            className="mt-1 resize-none text-sm"
+            rows={3}
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder="Describe what should appear in this area\u2026"
+            maxLength={2000}
+          />
+        </div>
+
+        {/* Chips */}
+        <div className="flex flex-wrap gap-1.5">
+          {PROMPT_CHIPS.map((chip) => (
+            <button
+              key={chip}
+              type="button"
+              className="rounded-full border border-[rgba(17,17,19,0.08)] px-2.5 py-1 text-[11px] font-medium text-neutral-600 transition-colors hover:border-[#635BFF]/30 hover:text-[#635BFF]"
+              onClick={() => setPrompt((prev) => (prev ? `${prev}, ${chip.toLowerCase()}` : chip))}
+            >
+              {chip}
+            </button>
+          ))}
+        </div>
+
+        {/* Controls grid */}
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <Label className="text-[10px] text-neutral-500">Model</Label>
+            <select
+              className="mt-1 h-8 w-full rounded-md border border-[rgba(17,17,19,0.08)] bg-white px-2 text-xs"
+              value={provider}
+              onChange={(e) => setProvider(e.target.value as AiProviderId)}
+            >
+              {(["openai", "bfl"] as AiProviderId[]).map((id) => (
+                <option key={id} value={id} disabled={!availability[id]}>
+                  {PROVIDER_LABELS[id]}
+                  {!availability[id] ? " (unavailable)" : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <Label className="text-[10px] text-neutral-500">Mode</Label>
+            <select
+              className="mt-1 h-8 w-full rounded-md border border-[rgba(17,17,19,0.08)] bg-white px-2 text-xs"
+              value={mode}
+              onChange={(e) => setMode(e.target.value as AiMode)}
+            >
+              <option value="generate">{MODE_LABELS.generate}</option>
+              <option value="replace">{MODE_LABELS.replace}</option>
+              <option value="edit">{MODE_LABELS.edit}</option>
+            </select>
+          </div>
+          <div>
+            <Label className="text-[10px] text-neutral-500">Quality</Label>
+            <select
+              className="mt-1 h-8 w-full rounded-md border border-[rgba(17,17,19,0.08)] bg-white px-2 text-xs"
+              value={quality}
+              onChange={(e) => setQuality(e.target.value as AiQuality)}
+            >
+              {(Object.keys(QUALITY_LABELS) as AiQuality[]).map((q) => (
+                <option key={q} value={q}>
+                  {QUALITY_LABELS[q]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <Label className="text-[10px] text-neutral-500">Fit</Label>
+            <select
+              className="mt-1 h-8 w-full rounded-md border border-[rgba(17,17,19,0.08)] bg-white px-2 text-xs"
+              value={fit}
+              onChange={(e) => setFit(e.target.value as "cover" | "contain")}
+            >
+              <option value="cover">Cover</option>
+              <option value="contain">Contain</option>
+            </select>
+          </div>
+        </div>
+
+        {!availability[provider] && (
+          <p className="text-[11px] text-amber-700">
+            API key not configured on the server.
+          </p>
+        )}
+
+        {/* Cost estimate */}
+        <div className="flex items-center justify-between rounded-md bg-[#F7F7F8] px-3 py-2 text-xs">
+          <span className="text-neutral-600">Estimated cost: <strong>{cost} credits</strong></span>
+          <span className="tabular-nums text-neutral-500">{credits} remaining</span>
+        </div>
+
+        {/* Status */}
+        {status && (
+          <p className="text-[11px] text-neutral-500" aria-live="polite">
+            Status: {status}
+          </p>
+        )}
+        {error && (
+          <p className="text-[11px] text-red-600" role="alert">
+            {error}
+          </p>
+        )}
+
+        {/* Actions */}
+        <div className="flex gap-2">
+          <Button
+            className="flex-1 bg-[#635BFF] text-white hover:bg-[#5851db]"
+            loading={loading}
+            disabled={!prompt.trim() || !availability[provider]}
+            onClick={handleGenerate}
+          >
+            {loading ? "Generating\u2026" : "Generate"}
+          </Button>
+          {loading && (
+            <Button variant="outline" onClick={handleCancel}>
+              Cancel
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* History */}
       {history.length > 0 && (
-        <div className="mt-4 border-t border-neutral-100 pt-3">
-          <p className="text-xs font-medium text-neutral-500">최근 생성</p>
-          <ul className="mt-2 space-y-1">
+        <div className="border-t border-[rgba(17,17,19,0.08)] px-4 py-3">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">Recent</p>
+          <ul className="mt-1.5 space-y-1">
             {history.map((item) => (
-              <li key={item.id} className="truncate text-xs text-neutral-600">
-                [{item.status}] {item.prompt}
+              <li key={item.id} className="truncate text-[11px] text-neutral-600">
+                <span className="mr-1 inline-block rounded bg-neutral-100 px-1 py-0.5 text-[10px] text-neutral-500">{item.status}</span>
+                {item.prompt}
               </li>
             ))}
           </ul>

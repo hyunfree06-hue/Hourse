@@ -3,78 +3,48 @@
 import Link from "next/link";
 import { GoogleAuthButton } from "@/components/auth/google-auth-button";
 import { Button } from "@/components/ui/button";
-import { siteConfig } from "@/config/site";
 
-export function LandingHero() {
+export function HeroSection() {
   return (
-    <section className="relative overflow-hidden border-b border-neutral-200">
+    <section className="relative overflow-hidden">
       <div
-        className="absolute inset-0 -z-10"
+        className="pointer-events-none absolute inset-0 -z-10"
         style={{
           background:
-            "radial-gradient(ellipse 80% 50% at 50% -20%, rgba(99,102,241,0.18), transparent), linear-gradient(180deg, #fafafa 0%, #ffffff 60%)",
+            "radial-gradient(ellipse 70% 45% at 50% -10%, rgba(99,91,255,0.07), transparent 70%)",
         }}
       />
-      <div className="mx-auto grid max-w-6xl gap-12 px-4 py-20 sm:px-6 lg:grid-cols-2 lg:items-center lg:py-28">
-        <div>
-          <p className="mb-4 text-sm font-medium tracking-wide text-indigo-600">
-            {siteConfig.name}
+      <div className="mx-auto max-w-[1120px] px-5 pb-10 pt-14 sm:pb-12 sm:pt-18">
+        <div className="mx-auto max-w-3xl text-center">
+          <p className="text-[13px] font-medium tracking-[0.04em] text-[#635BFF]">
+            AI-native design workspace
           </p>
-          <h1 className="text-4xl font-semibold tracking-tight text-neutral-950 sm:text-5xl">
-            아이디어를 바로 디자인으로 만드세요
+          <h1 className="mt-4 text-[44px] font-semibold leading-[1.05] tracking-[-0.035em] text-[#111113] sm:text-[64px] lg:text-[72px]">
+            Turn ideas into editable design.
           </h1>
-          <p className="mt-5 max-w-xl text-base leading-relaxed text-neutral-600 sm:text-lg">
-            개인 디자이너를 위한 AI 캔버스입니다. 영역을 드래그하고 프롬프트를
-            입력하면 OpenAI 또는 FLUX가 디자인 이미지를 바로 캔버스에 배치합니다.
+          <p className="mx-auto mt-5 max-w-xl text-[15px] leading-[1.65] text-[#3F3F46] sm:text-[16px]">
+            Create, refine, and compose visual work in one fluid canvas—built
+            for independent creators who move fast.
           </p>
-          <div className="mt-8 flex flex-wrap items-center gap-3">
+          <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
             <GoogleAuthButton
               size="lg"
-              label="무료 크레딧으로 시작하기"
+              label="Start creating free"
               nextPath="/dashboard"
+              className="rounded-[8px] bg-[#111113] px-5 text-[14px] font-medium text-white hover:bg-[#27272A]"
             />
-            <Button asChild variant="outline" size="lg">
-              <Link href="#editor-preview">에디터 미리보기</Link>
+            <Button
+              asChild
+              variant="outline"
+              size="lg"
+              className="rounded-[8px] border-[rgba(17,17,19,0.12)] text-[14px] font-medium text-[#3F3F46] hover:border-[rgba(17,17,19,0.2)] hover:text-[#111113]"
+            >
+              <Link href="#product">Explore the editor</Link>
             </Button>
           </div>
-        </div>
-
-        <div
-          id="editor-preview"
-          className="relative overflow-hidden rounded-xl border border-neutral-200 bg-[#F5F5F5] shadow-sm"
-          aria-hidden
-        >
-          <div className="flex h-10 items-center gap-2 border-b border-neutral-200 bg-white px-3">
-            <div className="size-2.5 rounded-full bg-neutral-300" />
-            <div className="size-2.5 rounded-full bg-neutral-300" />
-            <div className="size-2.5 rounded-full bg-neutral-300" />
-            <div className="ml-3 h-5 flex-1 rounded bg-neutral-100" />
-          </div>
-          <div className="grid grid-cols-[48px_1fr_160px]">
-            <div className="flex flex-col items-center gap-2 border-r border-neutral-200 bg-white py-3">
-              {Array.from({ length: 7 }).map((_, i) => (
-                <div
-                  key={i}
-                  className={`size-7 rounded-md ${i === 6 ? "bg-indigo-100 ring-1 ring-indigo-400" : "bg-neutral-100"}`}
-                />
-              ))}
-            </div>
-            <div className="relative min-h-[280px] p-6">
-              <div className="absolute left-10 top-12 h-28 w-40 rounded-md border-2 border-dashed border-indigo-400 bg-indigo-50/50">
-                <span className="absolute -top-5 left-0 text-[10px] font-medium text-indigo-600">
-                  AI 영역 320×224
-                </span>
-              </div>
-              <div className="absolute bottom-16 right-12 h-20 w-32 rounded bg-white shadow-sm ring-1 ring-neutral-200" />
-              <div className="absolute left-1/3 top-1/2 h-3 w-36 rounded bg-neutral-300" />
-            </div>
-            <div className="space-y-3 border-l border-neutral-200 bg-white p-3">
-              <div className="h-3 w-16 rounded bg-neutral-200" />
-              <div className="h-8 rounded bg-neutral-100" />
-              <div className="h-8 rounded bg-neutral-100" />
-              <div className="h-20 rounded bg-indigo-50 ring-1 ring-indigo-100" />
-            </div>
-          </div>
+          <p className="mt-4 text-[13px] text-[#71717A]">
+            Start with 10 free credits. No card required.
+          </p>
         </div>
       </div>
     </section>

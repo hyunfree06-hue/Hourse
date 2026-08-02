@@ -45,7 +45,7 @@ export function BillingClient({
           ) {
             setConfirming(false);
             clearInterval(timer);
-            if (attempts <= 8) toast.success("결제가 반영되었습니다.");
+            if (attempts <= 8) toast.success("Payment confirmed.");
           }
         }
       }
@@ -61,75 +61,76 @@ export function BillingClient({
     const res = await fetch("/api/billing/portal");
     const data = await res.json();
     if (!res.ok) {
-      toast.error(data.error?.message ?? "포털을 열 수 없습니다.");
+      toast.error(data.error?.message ?? "Unable to open billing portal.");
       return;
     }
     window.location.href = data.url;
   }
 
+  const planLabel = planCode.charAt(0).toUpperCase() + planCode.slice(1);
+
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-2xl font-semibold text-neutral-950">결제 및 크레딧</h1>
-        <p className="mt-1 text-sm text-neutral-500">
-          현재 요금제와 크레딧 사용 내역을 확인합니다. 결제는 미국 달러(USD)로
-          처리되며, 카드사에 따라 해외 결제 수수료 또는 환전 수수료가 발생할 수
-          있습니다.
+        <h1 className="text-xl font-semibold text-neutral-950">Billing &amp; Credits</h1>
+        <p className="mt-1 text-[13px] text-neutral-500">
+          View your current plan and credit usage. All payments are processed in
+          USD. Your card issuer may apply foreign transaction or conversion fees.
         </p>
       </div>
 
       {confirming && (
-        <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-900">
-          결제가 확인되는 중입니다. 잠시만 기다려 주세요…
+        <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3 text-[13px] text-indigo-900">
+          Confirming your payment&hellip; This may take a moment.
         </div>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-3">
-        <div className="rounded-xl border border-neutral-200 bg-white p-5">
-          <p className="text-xs text-neutral-500">현재 플랜</p>
-          <p className="mt-1 text-xl font-semibold capitalize">{planCode}</p>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div className="rounded-lg border border-neutral-200 bg-white p-4">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-neutral-400">Current plan</p>
+          <p className="mt-1 text-lg font-semibold text-neutral-900">{planLabel}</p>
         </div>
-        <div className="rounded-xl border border-neutral-200 bg-white p-5">
-          <p className="text-xs text-neutral-500">잔여 크레딧</p>
-          <p className="mt-1 text-xl font-semibold">{credits}</p>
+        <div className="rounded-lg border border-neutral-200 bg-white p-4">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-neutral-400">Credits remaining</p>
+          <p className="mt-1 text-lg font-semibold text-neutral-900">{credits}</p>
         </div>
-        <div className="rounded-xl border border-neutral-200 bg-white p-5">
-          <p className="text-xs text-neutral-500">구독 상태</p>
-          <p className="mt-1 text-xl font-semibold">
-            {subscription?.status ?? "없음"}
+        <div className="rounded-lg border border-neutral-200 bg-white p-4">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-neutral-400">Subscription</p>
+          <p className="mt-1 text-lg font-semibold text-neutral-900">
+            {subscription?.status ?? "None"}
           </p>
         </div>
       </div>
 
       <div className="flex flex-wrap gap-3">
-        <Button asChild>
-          <Link href="/pricing">요금제 변경</Link>
+        <Button size="sm" asChild>
+          <Link href="/pricing">Change plan</Link>
         </Button>
-        <Button variant="outline" onClick={openPortal}>
-          결제 수단 · 구독 관리
+        <Button size="sm" variant="outline" onClick={openPortal}>
+          Manage payment method
         </Button>
       </div>
 
       <section>
-        <h2 className="text-lg font-semibold">크레딧 내역</h2>
+        <h2 className="text-[15px] font-semibold text-neutral-900">Credit history</h2>
         {ledger.length === 0 ? (
-          <p className="mt-3 text-sm text-neutral-500">아직 내역이 없습니다.</p>
+          <p className="mt-3 text-[13px] text-neutral-500">No activity yet.</p>
         ) : (
-          <ul className="mt-3 divide-y divide-neutral-200 rounded-xl border border-neutral-200 bg-white">
+          <ul className="mt-3 divide-y divide-neutral-100 rounded-lg border border-neutral-200 bg-white">
             {ledger.map((item) => (
               <li
                 key={item.id}
-                className="flex items-center justify-between px-4 py-3 text-sm"
+                className="flex items-center justify-between px-4 py-2.5 text-[13px]"
               >
                 <div>
                   <p className="font-medium text-neutral-800">{item.reason}</p>
-                  <p className="text-xs text-neutral-500">
-                    {new Date(item.created_at).toLocaleString("ko-KR")}
+                  <p className="text-[11px] text-neutral-400">
+                    {new Date(item.created_at).toLocaleString("en-US")}
                   </p>
                 </div>
                 <span
                   className={
-                    item.delta >= 0 ? "text-emerald-600" : "text-neutral-800"
+                    item.delta >= 0 ? "font-medium text-emerald-600" : "text-neutral-800"
                   }
                 >
                   {item.delta >= 0 ? "+" : ""}
@@ -142,23 +143,23 @@ export function BillingClient({
       </section>
 
       <section>
-        <h2 className="text-lg font-semibold">결제 기록</h2>
+        <h2 className="text-[15px] font-semibold text-neutral-900">Payment history</h2>
         {payments.length === 0 ? (
-          <p className="mt-3 text-sm text-neutral-500">결제 기록이 없습니다.</p>
+          <p className="mt-3 text-[13px] text-neutral-500">No payments recorded.</p>
         ) : (
-          <ul className="mt-3 divide-y divide-neutral-200 rounded-xl border border-neutral-200 bg-white">
+          <ul className="mt-3 divide-y divide-neutral-100 rounded-lg border border-neutral-200 bg-white">
             {payments.map((p) => (
               <li
                 key={p.id}
-                className="flex items-center justify-between px-4 py-3 text-sm"
+                className="flex items-center justify-between px-4 py-2.5 text-[13px]"
               >
                 <div>
-                  <p className="font-medium">{p.payment_type}</p>
-                  <p className="text-xs text-neutral-500">
-                    {p.status} · {new Date(p.created_at).toLocaleString("ko-KR")}
+                  <p className="font-medium text-neutral-800">{p.payment_type}</p>
+                  <p className="text-[11px] text-neutral-400">
+                    {p.status} &middot; {new Date(p.created_at).toLocaleString("en-US")}
                   </p>
                 </div>
-                <span>{p.credits_granted} 크레딧</span>
+                <span className="text-neutral-700">{p.credits_granted} credits</span>
               </li>
             ))}
           </ul>

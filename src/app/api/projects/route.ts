@@ -18,7 +18,7 @@ export async function GET() {
 
   if (error) {
     return NextResponse.json(
-      { error: { code: "db_error", message: "프로젝트 목록을 불러오지 못했습니다." } },
+      { error: { code: "db_error", message: "Unable to load projects" } },
       { status: 500 },
     );
   }
@@ -51,7 +51,7 @@ export async function POST() {
 
   if (error || !data) {
     return NextResponse.json(
-      { error: { code: "create_failed", message: "프로젝트 생성에 실패했습니다." } },
+      { error: { code: "create_failed", message: "Unable to create project" } },
       { status: 500 },
     );
   }

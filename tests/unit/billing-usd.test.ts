@@ -59,6 +59,12 @@ describe("USD billing catalog", () => {
       .join(" ");
     expect(joined).not.toMatch(/₩|KRW|원/);
   });
+
+  it("uses Hourse product names for paid plans", () => {
+    expect(creator.productName).toBe("Hourse Creator");
+    expect(pro.productName).toBe("Hourse Pro");
+    expect(pack.productName).toBe("Hourse Credit Pack");
+  });
 });
 
 describe("checkout trust boundary", () => {

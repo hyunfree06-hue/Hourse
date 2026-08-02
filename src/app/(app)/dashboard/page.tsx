@@ -1,6 +1,11 @@
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/auth/session";
 import { DashboardClient } from "./dashboard-client";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Projects",
+};
 
 export default async function DashboardPage() {
   const supabase = await createClient();

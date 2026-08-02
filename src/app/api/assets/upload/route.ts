@@ -19,10 +19,10 @@ export async function POST(req: Request) {
     const projectId = String(form.get("projectId") ?? "");
 
     if (!(file instanceof File)) {
-      throw new AppError("invalid_file", "파일이 필요합니다.", 400);
+      throw new AppError("invalid_file", "A file is required.", 400);
     }
     if (!projectId) {
-      throw new AppError("invalid_project", "프로젝트 ID가 필요합니다.", 400);
+      throw new AppError("invalid_project", "Project ID is required.", 400);
     }
 
     if (
@@ -32,7 +32,7 @@ export async function POST(req: Request) {
     ) {
       throw new AppError(
         "unsupported_type",
-        "지원하지 않는 파일 형식입니다. PNG, JPEG, WebP, SVG만 업로드할 수 있습니다.",
+        "Unsupported file type. Only PNG, JPEG, WebP, and SVG are allowed.",
         400,
       );
     }
@@ -41,7 +41,7 @@ export async function POST(req: Request) {
     if (file.size > maxBytes) {
       throw new AppError(
         "file_too_large",
-        `파일 크기는 ${uploadConfig.maxUploadMb}MB 이하여야 합니다.`,
+        `File size must be ${uploadConfig.maxUploadMb}MB or less.`,
         400,
       );
     }
@@ -55,7 +55,7 @@ export async function POST(req: Request) {
       .maybeSingle();
 
     if (!project) {
-      throw new AppError("not_found", "프로젝트를 찾을 수 없습니다.", 404);
+      throw new AppError("not_found", "Project not found", 404);
     }
 
     let buffer = Buffer.from(await file.arrayBuffer());
@@ -81,7 +81,7 @@ export async function POST(req: Request) {
       .upload(path, buffer, { contentType: mime, upsert: false });
 
     if (uploadError) {
-      throw new AppError("upload_failed", "파일 업로드에 실패했습니다.", 500);
+      throw new AppError("upload_failed", "Unable to upload file.", 500);
     }
 
     const { data: asset, error: assetError } = await admin
@@ -99,7 +99,7 @@ export async function POST(req: Request) {
       .single();
 
     if (assetError || !asset) {
-      throw new AppError("asset_failed", "에셋 기록에 실패했습니다.", 500);
+      throw new AppError("asset_failed", "Unable to save asset record.", 500);
     }
 
     const { data: signed } = await admin.storage

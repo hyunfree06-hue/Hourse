@@ -6,7 +6,7 @@ import { z } from "zod";
  */
 const clientEnvSchema = z.object({
   NEXT_PUBLIC_APP_URL: z.string().url().default("http://localhost:3000"),
-  NEXT_PUBLIC_BRAND_NAME: z.string().default("CanvasAI"),
+  NEXT_PUBLIC_BRAND_NAME: z.string().default("Hourse"),
   NEXT_PUBLIC_SUPABASE_URL: z.string().optional().default(""),
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: z.string().optional().default(""),
 });
@@ -26,7 +26,7 @@ function loadClientEnv(): ClientEnv {
     console.error("Invalid client env", parsed.error.flatten().fieldErrors);
     return {
       NEXT_PUBLIC_APP_URL: "http://localhost:3000",
-      NEXT_PUBLIC_BRAND_NAME: "CanvasAI",
+      NEXT_PUBLIC_BRAND_NAME: "Hourse",
       NEXT_PUBLIC_SUPABASE_URL: "",
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "",
     };
