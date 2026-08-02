@@ -14,6 +14,8 @@ export const editorConfig = {
   customObjectProperties: [
     "objectId",
     "assetId",
+    "storageBucket",
+    "storagePath",
     "objectRole",
     "generatedBy",
     "generationId",

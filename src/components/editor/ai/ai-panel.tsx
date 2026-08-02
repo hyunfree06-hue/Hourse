@@ -22,9 +22,7 @@ import { withCustomDefaults } from "@/lib/canvas/custom-properties";
 import { aspectRatioLabel } from "@/lib/utils/geometry";
 import {
   CANVAS_INSERT_ERROR_MESSAGE,
-  describeSignedUrlForLogs,
   GeneratedImageLoadError,
-  loadFabricImageFromSignedUrl,
 } from "@/lib/canvas/load-fabric-image";
 
 function sanitizeUserError(message: string): string {
@@ -174,35 +172,48 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
     throw new Error("Generation timed out.");
   }
 
-  async function refreshSignedUrl(id: string): Promise<string | null> {
+  async function refreshAssetAccess(id: string): Promise<{
+    signedUrl: string | null;
+    assetId: string | null;
+    bucket: string | null;
+    path: string | null;
+  }> {
     const res = await fetch(`/api/ai/generations/${id}/signed-url`, {
       method: "POST",
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      return { signedUrl: null, assetId: null, bucket: null, path: null };
+    }
     const data = await res.json();
-    return typeof data.signedUrl === "string" ? data.signedUrl : null;
+    return {
+      signedUrl: typeof data.signedUrl === "string" ? data.signedUrl : null,
+      assetId: typeof data.assetId === "string" ? data.assetId : null,
+      bucket: typeof data.bucket === "string" ? data.bucket : null,
+      path: typeof data.path === "string" ? data.path : null,
+    };
+  }
+
+  function logInsert(event: string, data?: Record<string, unknown>) {
+    if (process.env.NODE_ENV !== "development") return;
+    console.info(JSON.stringify({ stage: "client_image_insert", event, ...data }));
   }
 
   async function placeResult(gen: {
     signedUrl?: string | null;
     output_asset_id?: string;
     id: string;
+    storageBucket?: string | null;
+    storagePath?: string | null;
   }) {
     const api = (
       window as unknown as {
         __hourse?: {
           canvas: {
             add: (o: unknown) => void;
-            remove: (o: unknown) => void;
-            getObjects: () => Array<{
-              objectRole?: string;
-              left?: number;
-              top?: number;
-            }>;
+            getObjects: () => unknown[];
             setActiveObject: (o: unknown) => void;
             requestRenderAll: () => void;
           };
-          history: { save: () => void };
         };
       }
     ).__hourse;
@@ -210,71 +221,121 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
       throw new GeneratedImageLoadError("CANVAS_UNAVAILABLE");
     }
 
+    const assetId = gen.output_asset_id;
     let signedUrl = gen.signedUrl ?? null;
-    if (!signedUrl) {
-      signedUrl = await refreshSignedUrl(gen.id);
-    }
-    if (!signedUrl) {
-      throw new GeneratedImageLoadError("SIGNED_URL_MISSING");
+    let storageBucket = gen.storageBucket ?? null;
+    let storagePath = gen.storagePath ?? null;
+
+    if (!assetId && !signedUrl) {
+      const refreshed = await refreshAssetAccess(gen.id);
+      signedUrl = refreshed.signedUrl;
+      storageBucket = refreshed.bucket;
+      storagePath = refreshed.path;
+    } else if (assetId && (!storageBucket || !storagePath)) {
+      const refreshed = await refreshAssetAccess(gen.id);
+      signedUrl = signedUrl ?? refreshed.signedUrl;
+      storageBucket = storageBucket ?? refreshed.bucket;
+      storagePath = storagePath ?? refreshed.path;
     }
 
-    const urlMeta = describeSignedUrlForLogs(signedUrl);
-    if (process.env.NODE_ENV === "development") {
-      console.info(
-        JSON.stringify({
-          stage: "client_image_insert",
-          generationId: gen.id,
-          assetId: gen.output_asset_id,
-          fabricVersion: "7",
-          origin: urlMeta.origin,
-          pathname: urlMeta.pathname,
-        }),
-      );
-    }
+    const {
+      loadFabricImageForAsset,
+    } = await import("@/lib/canvas/load-fabric-image");
 
-    api.history.save();
-    const { image: img, revoke } = await loadFabricImageFromSignedUrl(signedUrl, {
-      refreshSignedUrl: () => refreshSignedUrl(gen.id),
+    const loaded = await loadFabricImageForAsset({
+      assetId,
+      signedUrl,
+      preferSameOrigin: true,
+      refreshSignedUrl: async () => {
+        const refreshed = await refreshAssetAccess(gen.id);
+        return refreshed.signedUrl;
+      },
+      onDebug: logInsert,
     });
 
-    try {
-      const scaleX = aiRegion.width / (img.width || 1);
-      const scaleY = aiRegion.height / (img.height || 1);
-      const scale =
-        fit === "cover" ? Math.max(scaleX, scaleY) : Math.min(scaleX, scaleY);
-      const alreadyFitted =
-        Math.abs((img.width || 0) - aiRegion.width) < 1 &&
-        Math.abs((img.height || 0) - aiRegion.height) < 1;
+    const img = loaded.image;
+    const targetWidth = aiRegion.width;
+    const targetHeight = aiRegion.height;
+    const { computeGeneratedImageScale } = await import(
+      "@/lib/canvas/load-fabric-image"
+    );
+    const scale = computeGeneratedImageScale(
+      img.width || 0,
+      img.height || 0,
+      targetWidth,
+      targetHeight,
+      fit,
+    );
 
-      img.set(
-        withCustomDefaults({
-          left: aiRegion.left,
-          top: aiRegion.top,
-          scaleX: alreadyFitted ? 1 : scale,
-          scaleY: alreadyFitted ? 1 : scale,
-          objectRole: "generated",
-          generatedBy: provider,
-          generationId: gen.id,
-          assetId: gen.output_asset_id,
-          name: "Generated image",
-          clipPath: new Rect({
-            left: aiRegion.left,
-            top: aiRegion.top,
-            width: aiRegion.width,
-            height: aiRegion.height,
-            absolutePositioned: true,
-          }),
-        }),
-      );
-      api.canvas.add(img);
-      api.canvas.setActiveObject(img);
-      api.canvas.requestRenderAll();
-      api.history.save();
-      window.dispatchEvent(new CustomEvent("hourse:dirty"));
-    } finally {
-      // Revoke after Fabric has the decoded bitmap on the canvas.
-      requestAnimationFrame(() => revoke());
+    const left = Number(aiRegion.left);
+    const top = Number(aiRegion.top);
+    const clipW = Number(aiRegion.width);
+    const clipH = Number(aiRegion.height);
+    if (
+      ![left, top, clipW, clipH].every((n) => Number.isFinite(n)) ||
+      clipW <= 0 ||
+      clipH <= 0
+    ) {
+      throw new GeneratedImageLoadError("INVALID_SELECTION_BOUNDS");
     }
+
+    // Independent clip rect — do not reuse the live AI region object.
+    const clipPath = new Rect({
+      left,
+      top,
+      width: clipW,
+      height: clipH,
+      absolutePositioned: true,
+      originX: "left",
+      originY: "top",
+    });
+
+    img.set(
+      withCustomDefaults({
+        objectId: loaded.objectId,
+        left,
+        top,
+        originX: "left",
+        originY: "top",
+        scaleX: scale,
+        scaleY: scale,
+        objectRole: "generated",
+        generatedBy: provider,
+        generationId: gen.id,
+        assetId,
+        storageBucket: storageBucket ?? "generated-assets",
+        storagePath: storagePath ?? undefined,
+        name: "Generated image",
+        clipPath,
+      }),
+    );
+
+    logInsert("canvas_add_start");
+    api.canvas.add(img);
+    api.canvas.setActiveObject(img);
+    api.canvas.requestRenderAll();
+    logInsert("canvas_requestRenderAll");
+
+    const objects = api.canvas.getObjects();
+    const present = objects.includes(img);
+    logInsert("canvas_getObjects_verify", {
+      present,
+      objectCount: objects.length,
+      width: img.width,
+      height: img.height,
+      scale,
+      source: loaded.source,
+      objectUrlKeptAlive: Boolean(loaded.objectUrl),
+    });
+    if (!present) {
+      throw new GeneratedImageLoadError("CANVAS_ADD_FAILED");
+    }
+
+    // Autosave is separate — do not treat save failure as insertion failure.
+    logInsert("insertion_success_before_autosave");
+    queueMicrotask(() => {
+      window.dispatchEvent(new CustomEvent("hourse:dirty"));
+    });
   }
 
   async function retryInsertToCanvas() {
@@ -282,10 +343,14 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
     setInserting(true);
     setError(null);
     try {
-      const freshUrl = await refreshSignedUrl(pendingInsert.id);
+      const refreshed = await refreshAssetAccess(pendingInsert.id);
       await placeResult({
-        ...pendingInsert,
-        signedUrl: freshUrl ?? pendingInsert.signedUrl,
+        id: pendingInsert.id,
+        output_asset_id:
+          refreshed.assetId ?? pendingInsert.output_asset_id,
+        signedUrl: refreshed.signedUrl ?? pendingInsert.signedUrl,
+        storageBucket: refreshed.bucket,
+        storagePath: refreshed.path,
       });
       setPendingInsert(null);
       setStatus("completed");
@@ -295,10 +360,21 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
         ),
       );
       toast.success("Image added to canvas.");
-    } catch {
+    } catch (err) {
       setStatus("insertion_failed");
       setError(CANVAS_INSERT_ERROR_MESSAGE);
       toast.error(CANVAS_INSERT_ERROR_MESSAGE);
+      if (process.env.NODE_ENV === "development") {
+        console.info(
+          JSON.stringify({
+            stage: "retry_insertion_failed",
+            code:
+              err instanceof GeneratedImageLoadError ? err.code : "unknown",
+            httpStatus:
+              err instanceof GeneratedImageLoadError ? err.httpStatus : undefined,
+          }),
+        );
+      }
     } finally {
       setInserting(false);
     }

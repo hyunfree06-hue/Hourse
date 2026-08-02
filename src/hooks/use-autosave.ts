@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { editorConfig } from "@/config/editor";
+import { sanitizeCanvasJsonForSave } from "@/lib/canvas/load-fabric-image";
 import { useEditorStore } from "@/stores/editor-store";
 
 type Props = {
@@ -42,9 +43,13 @@ function readLocalBackup(projectId: string): string | null {
 }
 
 function buildSavePayload(api: HourseWindow, updatedAt: string) {
-  const canvasJson = api.canvas.toJSON([
+  const rawJson = api.canvas.toJSON([
     ...editorConfig.customObjectProperties,
   ]);
+  const canvasJson = sanitizeCanvasJsonForSave(rawJson) as Record<
+    string,
+    unknown
+  >;
 
   // Ensure JSON-serializable (throws on circular refs / non-finite numbers)
   const safeJson = JSON.parse(

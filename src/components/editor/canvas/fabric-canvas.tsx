@@ -136,7 +136,13 @@ export function FabricCanvas({
     canvas.on("object:added", () => {
       window.dispatchEvent(new CustomEvent("hourse:dirty"));
     });
-    canvas.on("object:removed", () => {
+    canvas.on("object:removed", (opt: { target?: FabricObject }) => {
+      const target = opt?.target as { objectId?: string } | undefined;
+      if (target?.objectId) {
+        void import("@/lib/canvas/object-url-registry").then((m) =>
+          m.revokeObjectUrlForObject(target.objectId),
+        );
+      }
       window.dispatchEvent(new CustomEvent("hourse:dirty"));
     });
 
@@ -345,6 +351,10 @@ export function FabricCanvas({
       try {
         if (initialJson) {
           await canvas.loadFromJSON(initialJson);
+          const { rehydrateAssetImages } = await import(
+            "@/lib/canvas/load-fabric-image"
+          );
+          await rehydrateAssetImages(canvas);
         }
         canvas.backgroundColor = backgroundColor;
         canvas.requestRenderAll();
@@ -488,6 +498,9 @@ export function FabricCanvas({
       canvas.off("mouse:move", onMouseMove);
       canvas.off("mouse:up", onMouseUp);
       canvas.off("mouse:wheel", onWheel);
+      void import("@/lib/canvas/object-url-registry").then((m) =>
+        m.revokeAllObjectUrls(),
+      );
       canvas.dispose();
       canvasRef.current = null;
       delete (window as unknown as { __hourse?: unknown }).__hourse;
@@ -543,25 +556,35 @@ export async function addImageToCanvas(
   url: string,
   options?: { left?: number; top?: number; assetId?: string },
 ) {
-  const { loadFabricImageFromSignedUrl } = await import(
+  const { loadFabricImageForAsset } = await import(
     "@/lib/canvas/load-fabric-image"
   );
-  const { image: img, revoke } = await loadFabricImageFromSignedUrl(url);
-  try {
-    img.set(
-      withCustomDefaults({
-        left: options?.left ?? 100,
-        top: options?.top ?? 100,
-        objectRole: "design",
-        assetId: options?.assetId,
-        name: "Image",
-      }),
-    );
-    canvas.add(img);
-    canvas.setActiveObject(img);
-    canvas.requestRenderAll();
-  } finally {
-    requestAnimationFrame(() => revoke());
-  }
+  const loaded = options?.assetId
+    ? await loadFabricImageForAsset({
+        assetId: options.assetId,
+        preferSameOrigin: true,
+        signedUrl: url.startsWith("http") ? url : null,
+      })
+    : await loadFabricImageForAsset({
+        signedUrl: url,
+        preferSameOrigin: false,
+      });
+  const img = loaded.image;
+  img.set(
+    withCustomDefaults({
+      objectId: loaded.objectId,
+      left: options?.left ?? 100,
+      top: options?.top ?? 100,
+      originX: "left",
+      originY: "top",
+      objectRole: "design",
+      assetId: options?.assetId,
+      name: "Image",
+    }),
+  );
+  canvas.add(img);
+  canvas.setActiveObject(img);
+  canvas.requestRenderAll();
+  // Do not revoke object URL here — registry keeps it until remove/dispose.
   window.dispatchEvent(new CustomEvent("hourse:dirty"));
 }

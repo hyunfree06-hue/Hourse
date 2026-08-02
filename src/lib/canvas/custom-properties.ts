@@ -3,6 +3,8 @@ import { editorConfig } from "@/config/editor";
 export type CanvasObjectCustomProps = {
   objectId?: string;
   assetId?: string;
+  storageBucket?: string;
+  storagePath?: string;
   objectRole?: "ai-region" | "generated" | "design" | string;
   generatedBy?: string;
   generationId?: string;
