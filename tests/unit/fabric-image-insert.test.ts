@@ -23,7 +23,6 @@ import {
   revokeAllObjectUrls,
   revokeObjectUrlForObject,
 } from "@/lib/canvas/object-url-registry";
-import { Rect } from "fabric";
 
 function pngBytes(): Uint8Array {
   return Uint8Array.from(
@@ -227,25 +226,18 @@ describe("generated image scale (66×66)", () => {
 });
 
 describe("independent clipPath", () => {
-  it("builds a dedicated Rect from numeric bounds (not AI-region object)", () => {
+  it("builds a relative Rect from local bounds (not AI-region object)", async () => {
+    const { createGeneratedImageClipPath, isAbsoluteClipPath } = await import(
+      "@/lib/canvas/place-generated-image"
+    );
     const aiRegionObject = { left: 10, top: 20, width: 66, height: 66 };
-    const clipPath = new Rect({
-      left: Number(aiRegionObject.left),
-      top: Number(aiRegionObject.top),
-      width: Number(aiRegionObject.width),
-      height: Number(aiRegionObject.height),
-      absolutePositioned: true,
-      originX: "left",
-      originY: "top",
-    });
-    // Mutating / clearing the source region must not affect clipPath numbers.
+    const clipPath = createGeneratedImageClipPath(100, 100);
     aiRegionObject.left = NaN;
     aiRegionObject.width = 0;
-    expect(clipPath.left).toBe(10);
-    expect(clipPath.top).toBe(20);
-    expect(clipPath.width).toBe(66);
-    expect(clipPath.height).toBe(66);
-    expect(Number.isFinite(clipPath.left)).toBe(true);
+    expect(clipPath.width).toBe(100);
+    expect(clipPath.height).toBe(100);
+    expect(clipPath.left).toBe(0);
+    expect(isAbsoluteClipPath(clipPath)).toBe(false);
   });
 });
 

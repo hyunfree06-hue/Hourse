@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Rect } from "fabric";
 import { nanoid } from "nanoid";
 import { toast } from "sonner";
 import { X } from "lucide-react";
@@ -81,6 +80,7 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
   const credits = useEditorStore((s) => s.credits);
   const setCredits = useEditorStore((s) => s.setCredits);
   const setAiPanelOpen = useEditorStore((s) => s.setAiPanelOpen);
+  const setAiRegion = useEditorStore((s) => s.setAiRegion);
   const saveStatus = useEditorStore((s) => s.saveStatus);
 
   const [prompt, setPrompt] = useState("");
@@ -239,7 +239,11 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
         __hourse?: {
           canvas: {
             add: (o: unknown) => void;
-            getObjects: () => unknown[];
+            remove: (...o: unknown[]) => void;
+            getObjects: () => Array<{
+              objectRole?: string;
+              clipPath?: { absolutePositioned?: boolean };
+            }>;
             setActiveObject: (o: unknown) => void;
             requestRenderAll: () => void;
           };
@@ -280,9 +284,13 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
 
     const {
       loadFabricImageForAsset,
-      computeGeneratedImageScale,
       getFabricVersionForLogs,
     } = await import("@/lib/canvas/load-fabric-image");
+    const {
+      computeGeneratedImagePlacement,
+      applyGeneratedImagePlacement,
+      isAbsoluteClipPath,
+    } = await import("@/lib/canvas/place-generated-image");
 
     logInsert("asset_fetch", {
       event: "start",
@@ -304,65 +312,50 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
     });
 
     const img = loaded.image;
+    const target = {
+      left: Number(selection.left),
+      top: Number(selection.top),
+      width: Number(selection.width),
+      height: Number(selection.height),
+    };
+
     logInsert("image_transform", {
-      event: "scale_start",
+      event: "placement_start",
       width: img.width,
       height: img.height,
       blobSize: loaded.blobSize,
       contentType: loaded.contentType,
-      targetWidth: selection.width,
-      targetHeight: selection.height,
+      targetWidth: target.width,
+      targetHeight: target.height,
+      fit: selection.fit,
     });
 
-    const scale = computeGeneratedImageScale(
+    const placement = computeGeneratedImagePlacement(
       img.width || 0,
       img.height || 0,
-      selection.width,
-      selection.height,
+      target,
       selection.fit,
     );
 
-    const left = Number(selection.left);
-    const top = Number(selection.top);
-    const clipW = Number(selection.width);
-    const clipH = Number(selection.height);
-    if (
-      ![left, top, clipW, clipH, scale].every((n) => Number.isFinite(n)) ||
-      clipW <= 0 ||
-      clipH <= 0
-    ) {
-      throw new GeneratedImageLoadError("INVALID_SELECTION_BOUNDS");
-    }
-
     logInsert("clip_path", {
-      event: "create_independent_rect",
-      left,
-      top,
-      width: clipW,
-      height: clipH,
-      scale,
+      event: "create_relative_rect",
+      absolutePositioned: false,
+      localClipWidth: placement.localClipWidth,
+      localClipHeight: placement.localClipHeight,
+      scaleX: placement.scaleX,
+      scaleY: placement.scaleY,
+      centerLeft: placement.left,
+      centerTop: placement.top,
     });
 
-    // Independent clip rect — never reuse the live AI-region Fabric object.
-    const clipPath = new Rect({
-      left,
-      top,
-      width: clipW,
-      height: clipH,
-      absolutePositioned: true,
-      originX: "left",
-      originY: "top",
-    });
+    const clipPath = applyGeneratedImagePlacement(img, placement);
+    if (isAbsoluteClipPath(clipPath)) {
+      throw new GeneratedImageLoadError("INVALID_CLIP_PATH");
+    }
 
     img.set(
       withCustomDefaults({
         objectId: loaded.objectId,
-        left,
-        top,
-        originX: "left",
-        originY: "top",
-        scaleX: scale,
-        scaleY: scale,
         objectRole: "generated",
         generatedBy: provider,
         generationId: gen.id,
@@ -370,13 +363,34 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
         storageBucket: storageBucket ?? "generated-assets",
         storagePath: storagePath ?? undefined,
         name: "Generated image",
-        clipPath,
       }),
     );
+    // Re-apply placement after withCustomDefaults so custom props don't wipe transform/clip.
+    applyGeneratedImagePlacement(img, placement);
+    img.setCoords();
 
     logInsert("canvas_add", { event: "add_start" });
     api.canvas.add(img);
+
+    // Remove temporary AI-region overlays only — never dispose the image clipPath.
+    const regions = api.canvas
+      .getObjects()
+      .filter((obj) => obj.objectRole === "ai-region");
+    if (regions.length) {
+      api.canvas.remove(...regions);
+      setAiRegion(null);
+      logInsert("clip_path", {
+        event: "ai_region_removed",
+        removedCount: regions.length,
+        clipStillAttached: Boolean(img.clipPath),
+        clipAbsolute: isAbsoluteClipPath(
+          img.clipPath as { absolutePositioned?: boolean } | undefined,
+        ),
+      });
+    }
+
     api.canvas.setActiveObject(img);
+    img.setCoords();
     logInsert("canvas_render", { event: "requestRenderAll" });
     api.canvas.requestRenderAll();
 
@@ -388,11 +402,14 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
       objectCount: objects.length,
       width: img.width,
       height: img.height,
-      scale,
+      scaleX: placement.scaleX,
       source: loaded.source,
       objectUrlKeptAlive: Boolean(loaded.objectUrl),
       contentType: loaded.contentType,
       blobSize: loaded.blobSize,
+      clipAbsolutePositioned: isAbsoluteClipPath(
+        img.clipPath as { absolutePositioned?: boolean } | undefined,
+      ),
     });
     if (!wasAdded) {
       throw new GeneratedImageLoadError("FABRIC_IMAGE_NOT_ADDED");
