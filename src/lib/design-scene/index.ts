@@ -17,3 +17,8 @@ export {
   createDesignOperationsResponseFormat,
   assertOpenAiStrictJsonSchema,
 } from "@/lib/design-scene/schema";
+export {
+  DesignBriefSchema,
+  designBriefSchema,
+  normalizeDesignBrief,
+} from "@/lib/design-scene/design-brief-schema";

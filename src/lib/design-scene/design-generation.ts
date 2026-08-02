@@ -6,9 +6,12 @@ import {
   createDesignOperationsResponseFormat,
   createDesignResponseFormats,
   createDesignSceneResponseFormat,
-  designBriefSchema,
+  DesignBriefSchema,
   designOperationsSchema,
   editableDesignObjectSchema,
+  normalizeDesignBrief,
+  summarizeUnknownValue,
+  summarizeZodIssue,
   type DesignBrief,
   type DesignOperation,
   type EditableDesignScene,
@@ -286,14 +289,18 @@ async function createClient(): Promise<OpenAI> {
   return new OpenAI({ apiKey: env.OPENAI_API_KEY });
 }
 
-async function generateBrief(
+async function generateBriefOnce(
   client: OpenAI,
   model: string,
   input: DesignGenerationInput,
   briefFormat: ReturnType<typeof createDesignBriefResponseFormat>,
   ctx: DesignLogCtx,
+  retry: boolean,
 ): Promise<DesignBrief> {
-  designLog("provider_request_start", ctx, { pass: "brief" });
+  designLog("provider_request_start", ctx, {
+    pass: "brief",
+    briefRetry: retry,
+  });
   let response: OpenAI.Responses.Response;
   try {
     response = await client.responses.create({
@@ -301,8 +308,11 @@ async function generateBrief(
       input: [
         {
           role: "system",
-          content:
+          content: [
             "You are a senior brand designer. Produce a concise internal design brief as structured JSON only. No chain-of-thought.",
+            "spacingRhythm must be an array of numbers (e.g. [4, 8, 12, 16, 24, 32]), never a string.",
+            "spacingNotes must be a short string describing spacing usage.",
+          ].join(" "),
         },
         {
           role: "user",
@@ -311,7 +321,12 @@ async function generateBrief(
             `Frame size: ${Math.round(input.width)}x${Math.round(input.height)}`,
             `Quality: ${input.quality}`,
             "Cover hierarchy, layout, typography roles, palette, spacing rhythm, required objects, alignment, category, and tone.",
-          ].join("\n"),
+            retry
+              ? "RETRY: Strictly match the schema. spacingRhythm must be number[] like [4,8,12,16,24,32]. spacingNotes must be a string."
+              : "",
+          ]
+            .filter(Boolean)
+            .join("\n"),
         },
       ],
       text: { format: briefFormat },
@@ -329,19 +344,71 @@ async function generateBrief(
     });
   }
 
-  const parsed = designBriefSchema.safeParse(raw);
+  // Same schema instance as zodTextFormat / preflight.
+  const parsed = DesignBriefSchema.safeParse(raw);
   if (!parsed.success) {
-    designFailLog("structured_output_parse", ctx, "DESIGN_OUTPUT_SCHEMA_INVALID", {
-      issueCount: parsed.error.issues.length,
-      firstPath: parsed.error.issues[0]?.path?.join(".") ?? null,
-    });
+    const spacingValue =
+      raw && typeof raw === "object"
+        ? (raw as { spacingRhythm?: unknown }).spacingRhythm
+        : undefined;
+    const issueSummaries = parsed.error.issues
+      .slice(0, 8)
+      .map((issue) => summarizeZodIssue(issue, raw));
+    designFailLog(
+      "structured_output_parse",
+      ctx,
+      "DESIGN_OUTPUT_SCHEMA_INVALID",
+      {
+        issueCount: parsed.error.issues.length,
+        firstPath: issueSummaries[0]?.issuePath ?? null,
+        issues: issueSummaries,
+        spacingRhythm: summarizeUnknownValue(spacingValue),
+        briefRetry: retry,
+      },
+    );
     throw new DesignGenerationError("DESIGN_OUTPUT_SCHEMA_INVALID", {
       stage: "structured_output_parse",
       requestId: ctx.requestId,
       internalReason: "BRIEF_SCHEMA_MISMATCH",
+      details: {
+        firstPath: issueSummaries[0]?.issuePath ?? null,
+        spacingRhythm: summarizeUnknownValue(spacingValue),
+      },
     });
   }
-  return parsed.data;
+
+  return normalizeDesignBrief(parsed.data);
+}
+
+async function generateBrief(
+  client: OpenAI,
+  model: string,
+  input: DesignGenerationInput,
+  briefFormat: ReturnType<typeof createDesignBriefResponseFormat>,
+  ctx: DesignLogCtx,
+): Promise<DesignBrief> {
+  try {
+    return await generateBriefOnce(
+      client,
+      model,
+      input,
+      briefFormat,
+      ctx,
+      false,
+    );
+  } catch (error) {
+    if (
+      error instanceof DesignGenerationError &&
+      error.code === "DESIGN_OUTPUT_SCHEMA_INVALID"
+    ) {
+      designLog("structured_output_parse", ctx, {
+        briefRetry: true,
+        message: "retrying brief once after schema mismatch",
+      });
+      return generateBriefOnce(client, model, input, briefFormat, ctx, true);
+    }
+    throw error;
+  }
 }
 
 async function generateSceneFromBrief(

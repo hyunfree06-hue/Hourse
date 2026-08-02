@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { designFonts } from "@/lib/design-scene/font-registry";
+import { getDesignBriefJsonSchemaFromFormat } from "@/lib/design-scene/design-brief-format";
 
 export const DESIGN_SCENE_VERSION = 1 as const;
 export const MAX_DESIGN_OBJECTS = 48;
@@ -171,18 +172,14 @@ export type EditableDesignObject = z.infer<typeof editableDesignObjectSchema>;
 export type EditableTextObject = z.infer<typeof editableTextObjectSchema>;
 export type EditableImageObject = z.infer<typeof editableImageObjectSchema>;
 
-export const designBriefSchema = z.object({
-  category: z.string().min(1).max(64),
-  tone: z.string().min(1).max(120),
-  hierarchy: z.string().min(1).max(400),
-  layout: z.string().min(1).max(400),
-  typography: z.string().min(1).max(400),
-  paletteNotes: z.string().min(1).max(400),
-  requiredObjects: z.array(z.string().min(1).max(80)).min(1).max(24),
-  spacingRhythm: z.string().min(1).max(200),
-});
-
-export type DesignBrief = z.infer<typeof designBriefSchema>;
+export {
+  DesignBriefSchema,
+  designBriefSchema,
+  normalizeDesignBrief,
+  summarizeUnknownValue,
+  summarizeZodIssue,
+  type DesignBrief,
+} from "@/lib/design-scene/design-brief-schema";
 
 /**
  * Update patch: every key required; null means "leave unchanged".
@@ -490,35 +487,7 @@ const UPDATE_CHANGES_PROPS: Record<string, unknown> = {
 const UPDATE_CHANGES_REQUIRED = Object.keys(UPDATE_CHANGES_PROPS);
 
 export function getDesignBriefJsonSchema(): Record<string, unknown> {
-  return {
-    type: "object",
-    additionalProperties: false,
-    required: [
-      "category",
-      "tone",
-      "hierarchy",
-      "layout",
-      "typography",
-      "paletteNotes",
-      "requiredObjects",
-      "spacingRhythm",
-    ],
-    properties: {
-      category: { type: "string" },
-      tone: { type: "string" },
-      hierarchy: { type: "string" },
-      layout: { type: "string" },
-      typography: { type: "string" },
-      paletteNotes: { type: "string" },
-      requiredObjects: {
-        type: "array",
-        items: { type: "string" },
-        minItems: 1,
-        maxItems: 24,
-      },
-      spacingRhythm: { type: "string" },
-    },
-  };
+  return getDesignBriefJsonSchemaFromFormat();
 }
 
 export function getDesignSceneJsonSchema(): Record<string, unknown> {
@@ -709,6 +678,7 @@ function asResponseFormat(
 
 /** Production response formats — construct before charging credits. */
 export function createDesignBriefResponseFormat(): DesignResponseFormat {
+  // Same DesignBriefSchema instance as local safeParse (via zodTextFormat).
   return asResponseFormat("design_brief", getDesignBriefJsonSchema());
 }
 
