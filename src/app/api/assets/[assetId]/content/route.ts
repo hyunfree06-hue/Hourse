@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { requireApiUser } from "@/lib/auth/api";
 import { createServiceClient } from "@/lib/supabase/admin";
 import {
+  detectImageKindFromBytes,
+  mimeFromImageKind,
+  signatureHexPreview,
+} from "@/lib/canvas/image-bytes";
+import {
   AppError,
   createRequestId,
   logServerError,
@@ -16,7 +21,7 @@ type Params = { params: Promise<{ assetId: string }> };
 
 /**
  * Same-origin private asset stream for Safari-safe Fabric loading.
- * Authenticated + ownership-checked. Does not expose signed URL tokens.
+ * Authenticated + ownership-checked. Streams real image bytes (not JSON).
  */
 export async function GET(_req: Request, { params }: Params) {
   const requestId = createRequestId();
@@ -82,25 +87,27 @@ export async function GET(_req: Request, { params }: Params) {
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const contentType = asset.mime_type || file.type || "application/octet-stream";
+    const kind = detectImageKindFromBytes(buffer);
 
-    if (!contentType.startsWith("image/")) {
+    if (!kind) {
       logServerError({
         requestId,
         route: "GET /api/assets/[assetId]/content",
-        stage: "invalid_content_type",
+        stage: "invalid_image_bytes",
         userId: auth.user.id,
         assetId,
-        code: contentType,
+        message: `bytes=${buffer.length};sig=${signatureHexPreview(buffer, 4)};dbMime=${asset.mime_type ?? ""}`,
       });
       throw new AppError(
         "INVALID_GENERATED_IMAGE_TYPE",
-        "Asset is not an image.",
+        "Asset is not a valid image.",
         415,
         undefined,
         requestId,
       );
     }
+
+    const contentType = mimeFromImageKind(kind);
 
     logServerInfo({
       requestId,
@@ -110,15 +117,17 @@ export async function GET(_req: Request, { params }: Params) {
       assetId,
       bucket: asset.storage_bucket,
       objectPath: asset.storage_path,
-      message: `bytes=${buffer.length};type=${contentType}`,
+      message: `bytes=${buffer.length};type=${contentType};sig=${signatureHexPreview(buffer, 4)}`,
     });
 
-    return new NextResponse(buffer, {
+    // Uint8Array body — guarantees binary image bytes, not JSON.
+    return new NextResponse(new Uint8Array(buffer), {
       status: 200,
       headers: {
         "Content-Type": contentType,
         "Content-Length": String(buffer.length),
         "Cache-Control": "private, no-store",
+        "X-Content-Type-Options": "nosniff",
         "X-Request-Id": requestId,
       },
     });

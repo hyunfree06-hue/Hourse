@@ -99,6 +99,13 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
     id: string;
     output_asset_id?: string;
     signedUrl?: string;
+    selection: {
+      left: number;
+      top: number;
+      width: number;
+      height: number;
+      fit: "cover" | "contain";
+    };
   } | null>(null);
   const [history, setHistory] = useState<
     Array<{ id: string; prompt: string; status: string }>
@@ -193,9 +200,24 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
     };
   }
 
-  function logInsert(event: string, data?: Record<string, unknown>) {
+  function logInsert(
+    insertStage: string,
+    data?: Record<string, unknown>,
+  ) {
     if (process.env.NODE_ENV !== "development") return;
-    console.info(JSON.stringify({ stage: "client_image_insert", event, ...data }));
+    const safe = { ...(data ?? {}) };
+    delete safe.signedUrl;
+    delete safe.url;
+    delete safe.token;
+    delete safe.authorization;
+    delete safe.cookie;
+    console.info(
+      JSON.stringify({
+        scope: "client_image_insert",
+        stage: insertStage,
+        ...safe,
+      }),
+    );
   }
 
   async function placeResult(gen: {
@@ -204,6 +226,13 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
     id: string;
     storageBucket?: string | null;
     storagePath?: string | null;
+    selection?: {
+      left: number;
+      top: number;
+      width: number;
+      height: number;
+      fit: "cover" | "contain";
+    };
   }) {
     const api = (
       window as unknown as {
@@ -217,7 +246,18 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
         };
       }
     ).__hourse;
-    if (!api || !aiRegion) {
+
+    const selection = gen.selection ?? (aiRegion
+      ? {
+          left: aiRegion.left,
+          top: aiRegion.top,
+          width: aiRegion.width,
+          height: aiRegion.height,
+          fit,
+        }
+      : null);
+
+    if (!api || !selection) {
       throw new GeneratedImageLoadError("CANVAS_UNAVAILABLE");
     }
 
@@ -240,46 +280,70 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
 
     const {
       loadFabricImageForAsset,
+      computeGeneratedImageScale,
+      getFabricVersionForLogs,
     } = await import("@/lib/canvas/load-fabric-image");
+
+    logInsert("asset_fetch", {
+      event: "start",
+      assetId,
+      generationId: gen.id,
+      fabricVersion: getFabricVersionForLogs(),
+    });
 
     const loaded = await loadFabricImageForAsset({
       assetId,
       signedUrl,
       preferSameOrigin: true,
+      generationId: gen.id,
       refreshSignedUrl: async () => {
         const refreshed = await refreshAssetAccess(gen.id);
         return refreshed.signedUrl;
       },
-      onDebug: logInsert,
+      onStage: (stageName, data) => logInsert(stageName, data),
     });
 
     const img = loaded.image;
-    const targetWidth = aiRegion.width;
-    const targetHeight = aiRegion.height;
-    const { computeGeneratedImageScale } = await import(
-      "@/lib/canvas/load-fabric-image"
-    );
+    logInsert("image_transform", {
+      event: "scale_start",
+      width: img.width,
+      height: img.height,
+      blobSize: loaded.blobSize,
+      contentType: loaded.contentType,
+      targetWidth: selection.width,
+      targetHeight: selection.height,
+    });
+
     const scale = computeGeneratedImageScale(
       img.width || 0,
       img.height || 0,
-      targetWidth,
-      targetHeight,
-      fit,
+      selection.width,
+      selection.height,
+      selection.fit,
     );
 
-    const left = Number(aiRegion.left);
-    const top = Number(aiRegion.top);
-    const clipW = Number(aiRegion.width);
-    const clipH = Number(aiRegion.height);
+    const left = Number(selection.left);
+    const top = Number(selection.top);
+    const clipW = Number(selection.width);
+    const clipH = Number(selection.height);
     if (
-      ![left, top, clipW, clipH].every((n) => Number.isFinite(n)) ||
+      ![left, top, clipW, clipH, scale].every((n) => Number.isFinite(n)) ||
       clipW <= 0 ||
       clipH <= 0
     ) {
       throw new GeneratedImageLoadError("INVALID_SELECTION_BOUNDS");
     }
 
-    // Independent clip rect — do not reuse the live AI region object.
+    logInsert("clip_path", {
+      event: "create_independent_rect",
+      left,
+      top,
+      width: clipW,
+      height: clipH,
+      scale,
+    });
+
+    // Independent clip rect — never reuse the live AI-region Fabric object.
     const clipPath = new Rect({
       left,
       top,
@@ -310,29 +374,32 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
       }),
     );
 
-    logInsert("canvas_add_start");
+    logInsert("canvas_add", { event: "add_start" });
     api.canvas.add(img);
     api.canvas.setActiveObject(img);
+    logInsert("canvas_render", { event: "requestRenderAll" });
     api.canvas.requestRenderAll();
-    logInsert("canvas_requestRenderAll");
 
     const objects = api.canvas.getObjects();
-    const present = objects.includes(img);
-    logInsert("canvas_getObjects_verify", {
-      present,
+    const wasAdded = objects.includes(img);
+    logInsert("canvas_add", {
+      event: "verify",
+      wasAdded,
       objectCount: objects.length,
       width: img.width,
       height: img.height,
       scale,
       source: loaded.source,
       objectUrlKeptAlive: Boolean(loaded.objectUrl),
+      contentType: loaded.contentType,
+      blobSize: loaded.blobSize,
     });
-    if (!present) {
-      throw new GeneratedImageLoadError("CANVAS_ADD_FAILED");
+    if (!wasAdded) {
+      throw new GeneratedImageLoadError("FABRIC_IMAGE_NOT_ADDED");
     }
 
-    // Autosave is separate — do not treat save failure as insertion failure.
-    logInsert("insertion_success_before_autosave");
+    // Autosave is separate — never report save failure as insertion_failed.
+    logInsert("autosave", { event: "trigger_after_insertion_success" });
     queueMicrotask(() => {
       window.dispatchEvent(new CustomEvent("hourse:dirty"));
     });
@@ -342,6 +409,12 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
     if (!pendingInsert) return;
     setInserting(true);
     setError(null);
+    logInsert("retry", {
+      event: "start",
+      generationId: pendingInsert.id,
+      assetId: pendingInsert.output_asset_id,
+      note: "insert_only_no_openai_no_credits",
+    });
     try {
       const refreshed = await refreshAssetAccess(pendingInsert.id);
       await placeResult({
@@ -351,6 +424,7 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
         signedUrl: refreshed.signedUrl ?? pendingInsert.signedUrl,
         storageBucket: refreshed.bucket,
         storagePath: refreshed.path,
+        selection: pendingInsert.selection,
       });
       setPendingInsert(null);
       setStatus("completed");
@@ -364,17 +438,13 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
       setStatus("insertion_failed");
       setError(CANVAS_INSERT_ERROR_MESSAGE);
       toast.error(CANVAS_INSERT_ERROR_MESSAGE);
-      if (process.env.NODE_ENV === "development") {
-        console.info(
-          JSON.stringify({
-            stage: "retry_insertion_failed",
-            code:
-              err instanceof GeneratedImageLoadError ? err.code : "unknown",
-            httpStatus:
-              err instanceof GeneratedImageLoadError ? err.httpStatus : undefined,
-          }),
-        );
-      }
+      logInsert("retry", {
+        event: "failed",
+        code:
+          err instanceof GeneratedImageLoadError ? err.code : "unknown",
+        httpStatus:
+          err instanceof GeneratedImageLoadError ? err.httpStatus : undefined,
+      });
     } finally {
       setInserting(false);
     }
@@ -412,6 +482,15 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
         }
       }
 
+      // Snapshot selection before async work — AI region may be deselected later.
+      const selectionSnapshot = {
+        left: aiRegion.left,
+        top: aiRegion.top,
+        width: aiRegion.width,
+        height: aiRegion.height,
+        fit,
+      };
+
       let referenceImageBase64: string | undefined;
       if (mode === "replace" || mode === "edit") {
         referenceImageBase64 = (await captureRegionPng()) ?? undefined;
@@ -427,13 +506,13 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
           quality,
           mode,
           selection: {
-            left: aiRegion.left,
-            top: aiRegion.top,
-            width: aiRegion.width,
-            height: aiRegion.height,
-            fit,
+            left: selectionSnapshot.left,
+            top: selectionSnapshot.top,
+            width: selectionSnapshot.width,
+            height: selectionSnapshot.height,
+            fit: selectionSnapshot.fit,
           },
-          fit,
+          fit: selectionSnapshot.fit,
           idempotencyKey,
           referenceImageBase64,
         }),
@@ -464,7 +543,10 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
       // Provider + storage succeeded — credits already charged. Insertion is separate.
       setStatus("insertion_pending");
       try {
-        await placeResult(completed);
+        await placeResult({
+          ...completed,
+          selection: selectionSnapshot,
+        });
         setPendingInsert(null);
         setStatus("completed");
         setHistory((prev) =>
@@ -476,30 +558,29 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
           id: completed.id,
           output_asset_id: completed.output_asset_id,
           signedUrl: completed.signedUrl,
+          selection: selectionSnapshot,
         });
         setStatus("insertion_failed");
         setError(CANVAS_INSERT_ERROR_MESSAGE);
         toast.error(CANVAS_INSERT_ERROR_MESSAGE);
-        if (process.env.NODE_ENV === "development") {
-          console.info(
-            JSON.stringify({
-              stage: "client_insertion_failed",
-              generationId: completed.id,
-              code:
-                insertError instanceof GeneratedImageLoadError
-                  ? insertError.code
-                  : "unknown",
-              httpStatus:
-                insertError instanceof GeneratedImageLoadError
-                  ? insertError.httpStatus
-                  : undefined,
-              contentType:
-                insertError instanceof GeneratedImageLoadError
-                  ? insertError.contentType
-                  : undefined,
-            }),
-          );
-        }
+        logInsert("client_insertion_failed", {
+          generationId: completed.id,
+          assetId: completed.output_asset_id,
+          code:
+            insertError instanceof GeneratedImageLoadError
+              ? insertError.code
+              : "unknown",
+          httpStatus:
+            insertError instanceof GeneratedImageLoadError
+              ? insertError.httpStatus
+              : undefined,
+          contentType:
+            insertError instanceof GeneratedImageLoadError
+              ? insertError.contentType
+              : undefined,
+          message:
+            insertError instanceof Error ? insertError.message : undefined,
+        });
       }
     } catch (err) {
       const message =

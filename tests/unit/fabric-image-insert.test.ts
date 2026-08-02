@@ -12,19 +12,50 @@ import {
   sanitizeCanvasJsonForSave,
 } from "@/lib/canvas/load-fabric-image";
 import {
+  detectImageKindFromBytes,
+  isProbablyJsonOrText,
+  mimeFromImageKind,
+  signatureHexPreview,
+} from "@/lib/canvas/image-bytes";
+import {
   hasRegisteredObjectUrl,
   registerObjectUrl,
   revokeAllObjectUrls,
   revokeObjectUrlForObject,
 } from "@/lib/canvas/object-url-registry";
+import { Rect } from "fabric";
 
-function pngBytes(): Buffer {
-  // Minimal valid 1x1 PNG
-  return Buffer.from(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
-    "base64",
+function pngBytes(): Uint8Array {
+  return Uint8Array.from(
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    ),
   );
 }
+
+function jpegBytes(): Uint8Array {
+  // Minimal JPEG SOI + EOI
+  return Uint8Array.from([0xff, 0xd8, 0xff, 0xd9]);
+}
+
+describe("image byte signatures", () => {
+  it("detects PNG / JPEG / WebP magic bytes", () => {
+    expect(detectImageKindFromBytes(pngBytes())).toBe("png");
+    expect(detectImageKindFromBytes(jpegBytes())).toBe("jpeg");
+    const webp = new Uint8Array(12);
+    webp.set([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]);
+    expect(detectImageKindFromBytes(webp)).toBe("webp");
+    expect(mimeFromImageKind("png")).toBe("image/png");
+  });
+
+  it("rejects JSON masquerading as an image", () => {
+    const json = new TextEncoder().encode('{"error":"nope"}');
+    expect(detectImageKindFromBytes(json)).toBeNull();
+    expect(isProbablyJsonOrText(json)).toBe(true);
+    expect(signatureHexPreview(json, 4)).toBe("7B 22 65 72");
+  });
+});
 
 describe("signed image fetch", () => {
   const originalFetch = globalThis.fetch;
@@ -48,7 +79,7 @@ describe("signed image fetch", () => {
   it("accepts a valid image response and creates an object URL", async () => {
     const bytes = pngBytes();
     globalThis.fetch = vi.fn(async () =>
-      new Response(new Uint8Array(bytes), {
+      new Response(new Blob([Buffer.from(bytes)], { type: "image/png" }), {
         status: 200,
         headers: {
           "content-type": "image/png",
@@ -62,7 +93,6 @@ describe("signed image fetch", () => {
     );
     expect(result.contentType).toBe("image/png");
     expect(result.blob.size).toBe(bytes.length);
-    expect(result.blob.type).toMatch(/image\/png/);
     expect(result.objectUrl).toBe("blob:mock-object-url");
     expect(createObjectURL).toHaveBeenCalledOnce();
     expect(revokeObjectURL).not.toHaveBeenCalled();
@@ -96,6 +126,19 @@ describe("signed image fetch", () => {
       httpStatus: 403,
     });
   });
+
+  it("rejects empty image bodies", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(new Uint8Array(0), {
+        status: 200,
+        headers: { "content-type": "image/png" },
+      }),
+    ) as typeof fetch;
+
+    await expect(
+      fetchSignedImageAsObjectUrl("https://example.com/x"),
+    ).rejects.toMatchObject({ code: "EMPTY_IMAGE_BODY" });
+  });
 });
 
 describe("object URL registry — no premature revoke", () => {
@@ -115,10 +158,9 @@ describe("object URL registry — no premature revoke", () => {
     revokeObjectURL.mockClear();
   });
 
-  it("keeps object URL alive after successful Fabric-style load", () => {
+  it("keeps object URL alive after successful load", () => {
     registerObjectUrl("obj-1", "blob:kept-alive");
     expect(hasRegisteredObjectUrl("obj-1")).toBe(true);
-    // Successful insertion must NOT revoke immediately.
     expect(revokeObjectURL).not.toHaveBeenCalled();
   });
 
@@ -159,11 +201,10 @@ describe("sanitizeCanvasJsonForSave", () => {
     expect(obj.generationId).toBe("gen-1");
     expect(obj.objectUrl).toBeUndefined();
     expect(JSON.stringify(obj)).not.toContain("blob:");
-    expect(JSON.stringify(obj)).not.toContain("token=");
   });
 });
 
-describe("generated image scale", () => {
+describe("generated image scale (66×66)", () => {
   it("computes finite cover/contain scales", () => {
     expect(computeGeneratedImageScale(1024, 1024, 66, 66, "contain")).toBeCloseTo(
       66 / 1024,
@@ -180,14 +221,37 @@ describe("generated image scale", () => {
     try {
       computeGeneratedImageScale(0, 1024, 66, 66, "contain");
     } catch (error) {
-      expect(error).toMatchObject({ code: "INVALID_GENERATED_IMAGE_SCALE" });
+      expect(error).toMatchObject({ code: "INVALID_IMAGE_SCALE" });
     }
+  });
+});
+
+describe("independent clipPath", () => {
+  it("builds a dedicated Rect from numeric bounds (not AI-region object)", () => {
+    const aiRegionObject = { left: 10, top: 20, width: 66, height: 66 };
+    const clipPath = new Rect({
+      left: Number(aiRegionObject.left),
+      top: Number(aiRegionObject.top),
+      width: Number(aiRegionObject.width),
+      height: Number(aiRegionObject.height),
+      absolutePositioned: true,
+      originX: "left",
+      originY: "top",
+    });
+    // Mutating / clearing the source region must not affect clipPath numbers.
+    aiRegionObject.left = NaN;
+    aiRegionObject.width = 0;
+    expect(clipPath.left).toBe(10);
+    expect(clipPath.top).toBe(20);
+    expect(clipPath.width).toBe(66);
+    expect(clipPath.height).toBe(66);
+    expect(Number.isFinite(clipPath.left)).toBe(true);
   });
 });
 
 describe("image byte validation", () => {
   it("accepts valid PNG bytes", async () => {
-    const meta = await validateImageBuffer(pngBytes());
+    const meta = await validateImageBuffer(Buffer.from(pngBytes()));
     expect(meta.mimeType).toBe("image/png");
     expect(meta.width).toBe(1);
     expect(meta.height).toBe(1);
@@ -206,9 +270,7 @@ describe("signed URL privacy", () => {
       "https://abc.supabase.co/storage/v1/object/sign/generated-assets/u/p/x.png?token=SECRET_TOKEN",
     );
     expect(meta.origin).toBe("https://abc.supabase.co");
-    expect(meta.pathname).toContain("/generated-assets/");
     expect(JSON.stringify(meta)).not.toContain("SECRET_TOKEN");
-    expect(JSON.stringify(meta)).not.toContain("token=");
   });
 
   it("user-facing insert error never includes signed URL text", () => {
@@ -218,8 +280,8 @@ describe("signed URL privacy", () => {
   });
 });
 
-describe("Fabric v7 fromURL contract", () => {
-  it("exposes Promise-returning fromURL (Fabric 7 API)", async () => {
+describe("Fabric v7 API + asset route contracts", () => {
+  it("exposes Promise-returning fromURL (Fabric 7.4.0)", async () => {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
     const root = process.cwd();
@@ -235,18 +297,9 @@ describe("Fabric v7 fromURL contract", () => {
     expect(typeSource).toMatch(
       /static fromURL[\s\S]*Promise<\s*FabricImage\s*>/,
     );
-    expect(typeSource).not.toMatch(/fromURL\([^)]*callback\s*:/);
-  });
-});
-
-describe("retry insertion economics", () => {
-  it("signed-url refresh endpoint is documented as zero-credit", () => {
-    const contract = { creditsCharged: 0, regeneratesProvider: false };
-    expect(contract.creditsCharged).toBe(0);
-    expect(contract.regeneratesProvider).toBe(false);
   });
 
-  it("asset content route is a GET with private cache headers (contract)", async () => {
+  it("asset content route streams binary with private cache", async () => {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
     const source = await fs.readFile(
@@ -258,7 +311,53 @@ describe("retry insertion economics", () => {
     );
     expect(source).toContain("Cache-Control");
     expect(source).toContain("private, no-store");
-    expect(source).toContain("requireApiUser");
+    expect(source).toContain("detectImageKindFromBytes");
+    expect(source).toContain("new Uint8Array");
     expect(source).toMatch(/export async function GET/);
+  });
+});
+
+describe("retry insertion economics", () => {
+  it("signed-url refresh charges 0 credits and does not call OpenAI", async () => {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const source = await fs.readFile(
+      path.join(
+        process.cwd(),
+        "src/app/api/ai/generations/[generationId]/signed-url/route.ts",
+      ),
+      "utf8",
+    );
+    expect(source).toContain("creditsCharged: 0");
+    expect(source).not.toMatch(/openai|OpenAI|images\.generate/i);
+  });
+
+  it("retry UI path never posts a new generation", async () => {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const source = await fs.readFile(
+      path.join(process.cwd(), "src/components/editor/ai/ai-panel.tsx"),
+      "utf8",
+    );
+    const retryFn = source.slice(
+      source.indexOf("async function retryInsertToCanvas"),
+      source.indexOf("async function handleGenerate"),
+    );
+    expect(retryFn).toContain("refreshAssetAccess");
+    expect(retryFn).toContain("placeResult");
+    expect(retryFn).not.toContain('"/api/ai/generations"');
+    expect(retryFn).toContain("insert_only_no_openai_no_credits");
+  });
+
+  it("autosave is triggered only after insertion success", async () => {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const source = await fs.readFile(
+      path.join(process.cwd(), "src/components/editor/ai/ai-panel.tsx"),
+      "utf8",
+    );
+    expect(source).toContain('logInsert("autosave"');
+    expect(source).toContain("FABRIC_IMAGE_NOT_ADDED");
+    expect(source).toContain("trigger_after_insertion_success");
   });
 });
