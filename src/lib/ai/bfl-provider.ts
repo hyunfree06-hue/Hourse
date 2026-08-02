@@ -7,7 +7,8 @@ import type {
   GenerationProviderStatus,
   ImageGenerationProvider,
 } from "./types";
-import { downloadHttpsImage, normalizeImageSize } from "./image-utils";
+import { downloadHttpsImage, fitImageToSelection } from "./image-utils";
+import { normalizeBflImageSize } from "./size";
 
 type BflCreateResponse = {
   id?: string;
@@ -35,6 +36,7 @@ export class BflImageProvider implements ImageGenerationProvider {
   async generate(input: GenerateImageInput): Promise<GenerationProviderResult> {
     try {
       const endpoint = `${this.baseUrl}/${input.model ?? this.model}`;
+      const size = normalizeBflImageSize(input.width, input.height);
       const response = await fetch(endpoint, {
         method: "POST",
         headers: {
@@ -44,8 +46,8 @@ export class BflImageProvider implements ImageGenerationProvider {
         },
         body: JSON.stringify({
           prompt: input.prompt,
-          width: snapToMultiple(input.width, 16),
-          height: snapToMultiple(input.height, 16),
+          width: size.width,
+          height: size.height,
           output_format: "png",
         }),
       });
@@ -83,6 +85,7 @@ export class BflImageProvider implements ImageGenerationProvider {
   async edit(input: EditImageInput): Promise<GenerationProviderResult> {
     try {
       const endpoint = `${this.baseUrl}/${input.model ?? this.model}`;
+      const size = normalizeBflImageSize(input.width, input.height);
       const response = await fetch(endpoint, {
         method: "POST",
         headers: {
@@ -92,8 +95,8 @@ export class BflImageProvider implements ImageGenerationProvider {
         },
         body: JSON.stringify({
           prompt: input.prompt,
-          width: snapToMultiple(input.width, 16),
-          height: snapToMultiple(input.height, 16),
+          width: size.width,
+          height: size.height,
           output_format: "png",
           input_image: input.imagePng.toString("base64"),
         }),
@@ -201,21 +204,19 @@ export class BflImageProvider implements ImageGenerationProvider {
   }
 }
 
-function snapToMultiple(value: number, multiple: number): number {
-  return Math.max(multiple, Math.round(value / multiple) * multiple);
-}
-
 export async function resolveProviderResultImage(
   result: GenerationProviderResult | GenerationProviderStatus,
   width: number,
   height: number,
+  fit: "cover" | "contain" = "cover",
 ): Promise<Buffer> {
   if (result.imageBuffer) {
-    return normalizeImageSize(result.imageBuffer, width, height);
+    // Provider may already have fitted; ensure exact selection bounds.
+    return fitImageToSelection(result.imageBuffer, width, height, fit);
   }
   if (result.temporaryUrl) {
     const downloaded = await downloadHttpsImage(result.temporaryUrl);
-    return normalizeImageSize(downloaded, width, height);
+    return fitImageToSelection(downloaded, width, height, fit);
   }
   throw new Error("No result image available.");
 }

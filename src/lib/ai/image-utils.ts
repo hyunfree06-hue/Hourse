@@ -2,17 +2,45 @@ import sharp from "sharp";
 import { aiRuntimeConfig } from "@/config/editor";
 import { AppError } from "@/lib/utils/errors";
 
+export type ImageFitMode = "cover" | "contain";
+
+/**
+ * Fit a generated image into exact selection bounds.
+ * cover: fill, crop overflow · contain: letterbox with transparent padding
+ */
+export async function fitImageToSelection(
+  buffer: Buffer,
+  width: number,
+  height: number,
+  fit: ImageFitMode = "cover",
+): Promise<Buffer> {
+  const w = Math.max(1, Math.round(width));
+  const h = Math.max(1, Math.round(height));
+
+  if (fit === "contain") {
+    return sharp(buffer)
+      .resize(w, h, {
+        fit: "contain",
+        background: { r: 0, g: 0, b: 0, alpha: 0 },
+        position: "centre",
+      })
+      .png()
+      .toBuffer();
+  }
+
+  return sharp(buffer)
+    .resize(w, h, { fit: "cover", position: "centre" })
+    .png()
+    .toBuffer();
+}
+
+/** @deprecated Prefer fitImageToSelection with explicit fit */
 export async function normalizeImageSize(
   buffer: Buffer,
   width: number,
   height: number,
 ): Promise<Buffer> {
-  const w = Math.max(1, Math.round(width));
-  const h = Math.max(1, Math.round(height));
-  return sharp(buffer)
-    .resize(w, h, { fit: "cover", position: "centre" })
-    .png()
-    .toBuffer();
+  return fitImageToSelection(buffer, width, height, "cover");
 }
 
 export async function validateImageBuffer(buffer: Buffer): Promise<{
@@ -22,7 +50,7 @@ export async function validateImageBuffer(buffer: Buffer): Promise<{
 }> {
   const meta = await sharp(buffer).metadata();
   if (!meta.width || !meta.height) {
-    throw new AppError("invalid_image", "Invalid image.", 400);
+    throw new AppError("INVALID_IMAGE", "Invalid image.", 400);
   }
   const format = meta.format;
   const mime =
@@ -39,11 +67,11 @@ export async function downloadHttpsImage(url: string): Promise<Buffer> {
   try {
     parsed = new URL(url);
   } catch {
-    throw new AppError("invalid_url", "Invalid image URL.", 400);
+    throw new AppError("INVALID_URL", "Invalid image URL.", 400);
   }
 
   if (parsed.protocol !== "https:") {
-    throw new AppError("insecure_url", "Only HTTPS images can be downloaded.", 400);
+    throw new AppError("INSECURE_URL", "Only HTTPS images can be downloaded.", 400);
   }
 
   const controller = new AbortController();
@@ -57,7 +85,7 @@ export async function downloadHttpsImage(url: string): Promise<Buffer> {
 
     if (!response.ok) {
       throw new AppError(
-        "download_failed",
+        "DOWNLOAD_FAILED",
         "Unable to download the result image.",
         502,
       );
@@ -70,7 +98,7 @@ export async function downloadHttpsImage(url: string): Promise<Buffer> {
       !contentType.includes("octet-stream")
     ) {
       throw new AppError(
-        "invalid_content_type",
+        "INVALID_CONTENT_TYPE",
         "Response is not an image.",
         400,
       );
@@ -81,12 +109,12 @@ export async function downloadHttpsImage(url: string): Promise<Buffer> {
       lengthHeader &&
       Number(lengthHeader) > aiRuntimeConfig.maxDownloadBytes
     ) {
-      throw new AppError("file_too_large", "Image file is too large.", 400);
+      throw new AppError("FILE_TOO_LARGE", "Image file is too large.", 400);
     }
 
     const arrayBuffer = await response.arrayBuffer();
     if (arrayBuffer.byteLength > aiRuntimeConfig.maxDownloadBytes) {
-      throw new AppError("file_too_large", "Image file is too large.", 400);
+      throw new AppError("FILE_TOO_LARGE", "Image file is too large.", 400);
     }
 
     return Buffer.from(arrayBuffer);
@@ -113,3 +141,23 @@ export async function createFullMask(
     .toBuffer();
 }
 
+/** Ensure a value is JSON-serializable (no NaN/Infinity/undefined in nested structures). */
+export function assertJsonSafe(value: unknown, label = "payload"): unknown {
+  const serialized = JSON.stringify(value, (_key, v) => {
+    if (typeof v === "number" && !Number.isFinite(v)) {
+      throw new AppError(
+        "INVALID_JSON",
+        `${label} contains non-finite numbers.`,
+        400,
+      );
+    }
+    if (typeof v === "undefined") {
+      return null;
+    }
+    return v;
+  });
+  if (serialized === undefined) {
+    throw new AppError("INVALID_JSON", `${label} is not JSON-serializable.`, 400);
+  }
+  return JSON.parse(serialized) as unknown;
+}

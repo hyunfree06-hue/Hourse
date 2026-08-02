@@ -1,8 +1,13 @@
 import { randomUUID } from "crypto";
 import { createServiceClient } from "@/lib/supabase/admin";
-import { AppError } from "@/lib/utils/errors";
+import {
+  AppError,
+  logServerError,
+  supabaseErrorFields,
+} from "@/lib/utils/errors";
 import { refundCreditsAtomic } from "@/lib/ai/credits";
 import { validateImageBuffer } from "@/lib/ai/image-utils";
+import type { ImageFitMode } from "@/lib/ai/image-utils";
 import { resolveProviderResultImage } from "@/lib/ai/bfl-provider";
 import type { GenerationProviderResult, GenerationProviderStatus } from "@/lib/ai/types";
 
@@ -15,6 +20,8 @@ export async function failAndRefund(input: {
   amount: number;
   errorCode: string;
   errorMessage: string;
+  requestId?: string;
+  shouldRefund?: boolean;
 }) {
   await input.admin
     .from("ai_generations")
@@ -25,6 +32,10 @@ export async function failAndRefund(input: {
       completed_at: new Date().toISOString(),
     })
     .eq("id", input.generationId);
+
+  if (input.shouldRefund === false || input.amount <= 0) {
+    return;
+  }
 
   await refundCreditsAtomic({
     userId: input.userId,
@@ -41,12 +52,15 @@ export async function completeGeneration(input: {
   projectId: string;
   width: number;
   height: number;
+  fit?: ImageFitMode;
   result: GenerationProviderResult | GenerationProviderStatus;
+  requestId?: string;
 }) {
   const buffer = await resolveProviderResultImage(
     input.result,
     input.width,
     input.height,
+    input.fit ?? "cover",
   );
   const meta = await validateImageBuffer(buffer);
   const path = `${input.userId}/${input.projectId}/${randomUUID()}.png`;
@@ -56,7 +70,22 @@ export async function completeGeneration(input: {
     .upload(path, buffer, { contentType: "image/png", upsert: false });
 
   if (uploadError) {
-    throw new AppError("upload_failed", "Unable to save the result image.", 500);
+    logServerError({
+      requestId: input.requestId ?? "unknown",
+      route: "completeGeneration",
+      stage: "storage_upload",
+      projectId: input.projectId,
+      userId: input.userId,
+      generationId: input.generationId,
+      supabase: supabaseErrorFields(uploadError),
+    });
+    throw new AppError(
+      "STORAGE_UPLOAD_FAILED",
+      "The image was generated, but we couldn't add it to your project.",
+      500,
+      undefined,
+      input.requestId,
+    );
   }
 
   const { data: asset, error: assetError } = await input.admin
@@ -69,14 +98,29 @@ export async function completeGeneration(input: {
       storage_path: path,
       mime_type: meta.mimeType,
       file_size: buffer.length,
-      width: meta.width,
-      height: meta.height,
+      width: Math.round(input.width),
+      height: Math.round(input.height),
     })
     .select("*")
     .single();
 
   if (assetError || !asset) {
-    throw new AppError("asset_failed", "Unable to save asset record.", 500);
+    logServerError({
+      requestId: input.requestId ?? "unknown",
+      route: "completeGeneration",
+      stage: "asset_insert",
+      projectId: input.projectId,
+      userId: input.userId,
+      generationId: input.generationId,
+      supabase: supabaseErrorFields(assetError),
+    });
+    throw new AppError(
+      "STORAGE_UPLOAD_FAILED",
+      "The image was generated, but we couldn't add it to your project.",
+      500,
+      undefined,
+      input.requestId,
+    );
   }
 
   const { data: signed } = await input.admin.storage

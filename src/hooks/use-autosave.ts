@@ -12,7 +12,7 @@ type Props = {
 
 type HourseWindow = {
   canvas: {
-    toJSON: () => unknown;
+    toJSON: (propertiesToInclude?: string[]) => Record<string, unknown>;
     backgroundColor?: string;
     getWidth: () => number;
     getHeight: () => number;
@@ -41,6 +41,34 @@ function readLocalBackup(projectId: string): string | null {
   return legacy;
 }
 
+function buildSavePayload(api: HourseWindow, updatedAt: string) {
+  const canvasJson = api.canvas.toJSON([
+    ...editorConfig.customObjectProperties,
+  ]);
+
+  // Ensure JSON-serializable (throws on circular refs / non-finite numbers)
+  const safeJson = JSON.parse(
+    JSON.stringify(canvasJson, (_key, value) => {
+      if (typeof value === "number" && !Number.isFinite(value)) {
+        throw new Error("Canvas contains invalid number values.");
+      }
+      return value;
+    }),
+  ) as Record<string, unknown>;
+
+  return {
+    canvasJson: safeJson,
+    canvasWidth: api.canvas.getWidth(),
+    canvasHeight: api.canvas.getHeight(),
+    backgroundColor:
+      typeof api.canvas.backgroundColor === "string"
+        ? api.canvas.backgroundColor
+        : "#ffffff",
+    expectedUpdatedAt: updatedAt,
+    updatedAt,
+  };
+}
+
 export function useAutosave({ projectId, initialUpdatedAt }: Props) {
   const setSaveStatus = useEditorStore((s) => s.setSaveStatus);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -48,38 +76,55 @@ export function useAutosave({ projectId, initialUpdatedAt }: Props) {
   const dirtyRef = useRef(false);
   const lastThumbRef = useRef(0);
   const savingRef = useRef(false);
+  const failureCooldownRef = useRef(0);
 
   const backupKey = `${editorConfig.localBackupPrefix}${projectId}`;
 
   const save = useCallback(
-    async (force = false) => {
-      if (savingRef.current) return;
+    async (force = false): Promise<boolean> => {
+      if (savingRef.current) return false;
       const api = getHourseApi();
-      if (!api) return;
-      if (!dirtyRef.current && !force) return;
+      if (!api) return false;
+      if (!dirtyRef.current && !force) return true;
+
+      // Avoid tight autosave retry loops after a hard failure
+      if (
+        !force &&
+        failureCooldownRef.current > Date.now()
+      ) {
+        return false;
+      }
 
       savingRef.current = true;
       setSaveStatus("saving");
-      const json = api.canvas.toJSON();
-      const payload = {
-        canvasJson: json,
-        canvasWidth: api.canvas.getWidth(),
-        canvasHeight: api.canvas.getHeight(),
-        backgroundColor:
-          typeof api.canvas.backgroundColor === "string"
-            ? api.canvas.backgroundColor
-            : "#ffffff",
-        updatedAt: updatedAtRef.current,
-      };
+
+      let payload: ReturnType<typeof buildSavePayload>;
+      try {
+        payload = buildSavePayload(api, updatedAtRef.current);
+      } catch (error) {
+        setSaveStatus("error");
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "We couldn't prepare this project for saving.",
+        );
+        savingRef.current = false;
+        failureCooldownRef.current = Date.now() + 8_000;
+        return false;
+      }
 
       try {
-        localStorage.setItem(
-          backupKey,
-          JSON.stringify({
-            updatedAt: new Date().toISOString(),
-            payload: json,
-          }),
-        );
+        try {
+          localStorage.setItem(
+            backupKey,
+            JSON.stringify({
+              updatedAt: new Date().toISOString(),
+              payload: payload.canvasJson,
+            }),
+          );
+        } catch {
+          // quota / private mode — continue with network save
+        }
 
         const res = await fetch(`/api/projects/${projectId}`, {
           method: "PATCH",
@@ -95,29 +140,32 @@ export function useAutosave({ projectId, initialUpdatedAt }: Props) {
           );
           if (choice) {
             window.location.reload();
-            return;
+            return false;
           }
           updatedAtRef.current = data.serverUpdatedAt;
+          const retryPayload = buildSavePayload(api, data.serverUpdatedAt);
           const retry = await fetch(`/api/projects/${projectId}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              ...payload,
-              updatedAt: data.serverUpdatedAt,
-            }),
+            body: JSON.stringify(retryPayload),
           });
           const retryData = await retry.json();
           if (!retry.ok) {
-            throw new Error(retryData.error?.message ?? "Unable to save");
+            throw new Error(
+              retryData.error?.message ?? "We couldn't save this project.",
+            );
           }
           updatedAtRef.current = retryData.project.updated_at;
         } else if (!res.ok) {
-          throw new Error(data.error?.message ?? "Unable to save");
+          throw new Error(
+            data.error?.message ?? "We couldn't save this project.",
+          );
         } else {
           updatedAtRef.current = data.project.updated_at;
         }
 
         dirtyRef.current = false;
+        failureCooldownRef.current = 0;
         setSaveStatus("saved");
 
         const now = Date.now();
@@ -135,11 +183,16 @@ export function useAutosave({ projectId, initialUpdatedAt }: Props) {
             body: form,
           });
         }
+        return true;
       } catch (error) {
         setSaveStatus("error");
+        failureCooldownRef.current = Date.now() + 8_000;
         toast.error(
-          error instanceof Error ? error.message : "Unable to save.",
+          error instanceof Error
+            ? error.message
+            : "We couldn't save this project.",
         );
+        return false;
       } finally {
         savingRef.current = false;
       }

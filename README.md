@@ -51,12 +51,12 @@ Optional by feature:
 
 1. Create a Supabase project.
 2. Copy Project URL, publishable key, and service role key.
-3. In SQL Editor run migrations in order:
-   - `supabase/migrations/0001_initial.sql` (once, on new projects)
-   - `supabase/migrations/0002_billing_currency_usd.sql`
-   - `supabase/migrations/0003_rebrand_hourse.sql`
-4. Do **not** re-run `0001` or `0002` on databases that already applied them.
-5. Confirm private Storage buckets: `user-assets`, `generated-assets`, `project-thumbnails`.
+5. Apply migrations in order on a **new** database. On an already-migrated database, only run the next unapplied files:
+   - `0001_initial.sql` (once)
+   - `0002_billing_currency_usd.sql`
+   - `0003_rebrand_hourse.sql`
+   - `0004_fix_project_persistence.sql`
+6. Do **not** re-run migrations that were already applied.
 
 ## Google OAuth
 

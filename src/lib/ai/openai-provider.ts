@@ -7,7 +7,13 @@ import type {
   GenerationProviderResult,
   ImageGenerationProvider,
 } from "./types";
-import { normalizeImageSize } from "./image-utils";
+import { fitImageToSelection } from "./image-utils";
+import {
+  isGptImageModel,
+  normalizeOpenAiImageSize,
+  resolveOpenAiImageModel,
+} from "./size";
+import { logServerError } from "@/lib/utils/errors";
 
 function mapQuality(
   quality: GenerateImageInput["quality"],
@@ -15,13 +21,6 @@ function mapQuality(
   if (quality === "fast") return "low";
   if (quality === "high") return "high";
   return "medium";
-}
-
-function pickSize(width: number, height: number): "1024x1024" | "1536x1024" | "1024x1536" {
-  const ratio = width / height;
-  if (ratio > 1.2) return "1536x1024";
-  if (ratio < 0.8) return "1024x1536";
-  return "1024x1024";
 }
 
 export class OpenAIImageProvider implements ImageGenerationProvider {
@@ -35,25 +34,30 @@ export class OpenAIImageProvider implements ImageGenerationProvider {
       throw new Error("OPENAI_API_KEY is not configured.");
     }
     this.client = new OpenAI({ apiKey: env.OPENAI_API_KEY });
-    this.model = env.OPENAI_IMAGE_MODEL;
+    this.model = resolveOpenAiImageModel(env.OPENAI_IMAGE_MODEL);
   }
 
   async generate(input: GenerateImageInput): Promise<GenerationProviderResult> {
+    const model = resolveOpenAiImageModel(input.model ?? this.model);
+    const normalized = normalizeOpenAiImageSize(input.width, input.height);
+    const fit = input.fit ?? "cover";
+
     try {
       const response = await this.client.images.generate({
-        model: input.model ?? this.model,
+        model,
         prompt: input.prompt,
-        size: pickSize(input.width, input.height),
+        size: normalized.size,
         quality: mapQuality(input.quality),
         n: 1,
+        ...(isGptImageModel(model) ? { output_format: "png" as const } : {}),
       });
 
       const first = response.data?.[0];
       if (!first) {
         return {
           status: "failed",
-          errorCode: "empty_response",
-          errorMessage: "Generation failed.",
+          errorCode: "PROVIDER_REQUEST_FAILED",
+          errorMessage: "The image model couldn't complete this request.",
         };
       }
 
@@ -61,7 +65,12 @@ export class OpenAIImageProvider implements ImageGenerationProvider {
         const buffer = Buffer.from(first.b64_json, "base64");
         return {
           status: "completed",
-          imageBuffer: await normalizeImageSize(buffer, input.width, input.height),
+          imageBuffer: await fitImageToSelection(
+            buffer,
+            input.width,
+            input.height,
+            fit,
+          ),
           mimeType: "image/png",
           providerRequestId: response._request_id ?? undefined,
         };
@@ -72,13 +81,14 @@ export class OpenAIImageProvider implements ImageGenerationProvider {
           status: "completed",
           temporaryUrl: first.url,
           providerRequestId: response._request_id ?? undefined,
+          // Downstream resolver fits to selection
         };
       }
 
       return {
         status: "failed",
-        errorCode: "empty_response",
-        errorMessage: "Generation failed.",
+        errorCode: "PROVIDER_REQUEST_FAILED",
+        errorMessage: "The image model couldn't complete this request.",
       };
     } catch (error) {
       return normalizeOpenAiError(error);
@@ -86,21 +96,44 @@ export class OpenAIImageProvider implements ImageGenerationProvider {
   }
 
   async edit(input: EditImageInput): Promise<GenerationProviderResult> {
+    const model = resolveOpenAiImageModel(input.model ?? this.model);
+    const normalized = normalizeOpenAiImageSize(input.width, input.height);
+    const fit = input.fit ?? "cover";
+
     try {
-      const imageFile = await toFile(input.imagePng, "image.png", {
+      // Edit APIs expect the input image near the target generation size.
+      const imageForEdit = await fitImageToSelection(
+        input.imagePng,
+        normalized.width,
+        normalized.height,
+        "cover",
+      );
+      const imageFile = await toFile(imageForEdit, "image.png", {
         type: "image/png",
       });
 
       const params: OpenAI.Images.ImageEditParams = {
-        model: input.model ?? this.model,
+        model,
         image: imageFile,
         prompt: input.prompt,
-        size: pickSize(input.width, input.height),
+        size: normalized.size,
         n: 1,
+        ...(isGptImageModel(model)
+          ? {
+              quality: mapQuality(input.quality),
+              output_format: "png" as const,
+            }
+          : {}),
       };
 
       if (input.maskPng) {
-        params.mask = await toFile(input.maskPng, "mask.png", {
+        const maskForEdit = await fitImageToSelection(
+          input.maskPng,
+          normalized.width,
+          normalized.height,
+          "cover",
+        );
+        params.mask = await toFile(maskForEdit, "mask.png", {
           type: "image/png",
         });
       }
@@ -110,18 +143,19 @@ export class OpenAIImageProvider implements ImageGenerationProvider {
       if (!first) {
         return {
           status: "failed",
-          errorCode: "empty_response",
-          errorMessage: "Generation failed.",
+          errorCode: "PROVIDER_REQUEST_FAILED",
+          errorMessage: "The image model couldn't complete this request.",
         };
       }
 
       if (first.b64_json) {
         return {
           status: "completed",
-          imageBuffer: await normalizeImageSize(
+          imageBuffer: await fitImageToSelection(
             Buffer.from(first.b64_json, "base64"),
             input.width,
             input.height,
+            fit,
           ),
           mimeType: "image/png",
           providerRequestId: response._request_id ?? undefined,
@@ -138,8 +172,8 @@ export class OpenAIImageProvider implements ImageGenerationProvider {
 
       return {
         status: "failed",
-        errorCode: "empty_response",
-        errorMessage: "Generation failed.",
+        errorCode: "PROVIDER_REQUEST_FAILED",
+        errorMessage: "The image model couldn't complete this request.",
       };
     } catch (error) {
       return normalizeOpenAiError(error);
@@ -148,23 +182,51 @@ export class OpenAIImageProvider implements ImageGenerationProvider {
 }
 
 function normalizeOpenAiError(error: unknown): GenerationProviderResult {
+  const anyErr = error as {
+    status?: number;
+    code?: string;
+    type?: string;
+    message?: string;
+    error?: { code?: string; type?: string; message?: string };
+    requestID?: string;
+    request_id?: string;
+  };
+
+  logServerError({
+    requestId: anyErr.requestID ?? anyErr.request_id ?? "openai-unknown",
+    route: "openai-images",
+    stage: "provider_request",
+    provider: {
+      status: anyErr.status,
+      code: anyErr.code ?? anyErr.error?.code,
+      type: anyErr.type ?? anyErr.error?.type,
+      request_id: anyErr.requestID ?? anyErr.request_id,
+    },
+    message: anyErr.message ?? anyErr.error?.message,
+  });
+
   const message =
     error instanceof Error ? error.message : "Generation failed.";
   const lower = message.toLowerCase();
-  let errorCode = "provider_error";
+  let errorCode = "PROVIDER_REQUEST_FAILED";
   if (lower.includes("safety") || lower.includes("moderation")) {
-    errorCode = "safety_rejection";
+    errorCode = "SAFETY_REJECTION";
   } else if (lower.includes("timeout")) {
-    errorCode = "timeout";
+    errorCode = "TIMEOUT";
   } else if (lower.includes("rate")) {
-    errorCode = "rate_limited";
+    errorCode = "RATE_LIMITED";
+  } else if (lower.includes("size") || lower.includes("resolution")) {
+    errorCode = "INVALID_GENERATION_SIZE";
   }
+
   return {
     status: "failed",
     errorCode,
     errorMessage:
-      errorCode === "safety_rejection"
+      errorCode === "SAFETY_REJECTION"
         ? "This prompt was rejected by our safety policy. Please revise it and try again."
-        : "Generation failed.",
+        : errorCode === "INVALID_GENERATION_SIZE"
+          ? "This selection could not be prepared for the selected model."
+          : "The image model couldn't complete this request. Your credits were restored.",
   };
 }

@@ -43,7 +43,7 @@ export function EditorShell({ project, profile, availability }: Props) {
   const isMobilePreview = useEditorStore((s) => s.isMobilePreview);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  useAutosave({
+  const { save } = useAutosave({
     projectId: project.id,
     initialUpdatedAt: project.updated_at,
   });
@@ -169,7 +169,11 @@ export function EditorShell({ project, profile, availability }: Props) {
             />
           )}
           <BottomZoomBar />
-          <AiPanel projectId={project.id} availability={availability} />
+          <AiPanel
+            projectId={project.id}
+            availability={availability}
+            onEnsureSaved={save}
+          />
         </div>
         <PropertiesPanel />
       </div>

@@ -15,7 +15,7 @@ export async function requireApiUser(): Promise<
     if (error || !user) {
       return {
         error: NextResponse.json(
-          { error: { code: "unauthorized", message: "Authentication required" } },
+          { error: { code: "AUTH_REQUIRED", message: "Your session has expired. Sign in again." } },
           { status: 401 },
         ),
       };

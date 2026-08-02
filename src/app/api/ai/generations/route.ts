@@ -7,13 +7,18 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/admin";
 import { createGenerationSchema } from "@/lib/validation/schemas";
 import { getServerEnv } from "@/lib/validation/env.server";
-import { AppError, toErrorResponse } from "@/lib/utils/errors";
+import {
+  AppError,
+  createRequestId,
+  logServerError,
+  logServerInfo,
+  supabaseErrorFields,
+  toErrorResponse,
+} from "@/lib/utils/errors";
 import { createImageProvider, getProviderAvailability } from "@/lib/ai/provider";
 import { consumeCreditsAtomic } from "@/lib/ai/credits";
-import {
-  createFullMask,
-  normalizeImageSize,
-} from "@/lib/ai/image-utils";
+import { createFullMask, fitImageToSelection } from "@/lib/ai/image-utils";
+import { resolveOpenAiImageModel } from "@/lib/ai/size";
 import {
   completeGeneration,
   failAndRefund,
@@ -21,7 +26,7 @@ import {
 
 export const runtime = "nodejs";
 
-async function checkRateLimit(userId: string): Promise<void> {
+async function checkRateLimit(userId: string, requestId: string): Promise<void> {
   const admin = createServiceClient();
   const since = new Date(Date.now() - 60_000).toISOString();
   const { count, error } = await admin
@@ -30,22 +35,41 @@ async function checkRateLimit(userId: string): Promise<void> {
     .eq("user_id", userId)
     .gte("created_at", since);
 
-  if (error) return;
+  if (error) {
+    logServerError({
+      requestId,
+      route: "POST /api/ai/generations",
+      stage: "rate_limit",
+      userId,
+      supabase: supabaseErrorFields(error),
+    });
+    return;
+  }
   if ((count ?? 0) >= aiRuntimeConfig.rateLimitPerMinute) {
     throw new AppError(
-      "rate_limited",
+      "RATE_LIMITED",
       "Too many requests. Please try again in a moment.",
       429,
+      undefined,
+      requestId,
     );
   }
 }
 
 export async function POST(req: Request) {
+  const requestId = createRequestId();
   let generationId: string | null = null;
   let userId: string | null = null;
   let creditsCharged = 0;
+  let creditsConsumed = false;
 
   try {
+    logServerInfo({
+      requestId,
+      route: "POST /api/ai/generations",
+      stage: "auth",
+    });
+
     const auth = await requireApiUser();
     if (auth.error) return auth.error;
     userId = auth.user.id;
@@ -53,28 +77,56 @@ export async function POST(req: Request) {
     const body = await req.json();
     const input = createGenerationSchema.parse(body);
 
+    logServerInfo({
+      requestId,
+      route: "POST /api/ai/generations",
+      stage: "request_validation",
+      projectId: input.projectId,
+      userId,
+    });
+
     const supabase = await createClient();
-    const { data: project } = await supabase
+    const { data: project, error: projectError } = await supabase
       .from("projects")
       .select("id, user_id")
       .eq("id", input.projectId)
       .eq("user_id", auth.user.id)
       .maybeSingle();
 
+    if (projectError) {
+      logServerError({
+        requestId,
+        route: "POST /api/ai/generations",
+        stage: "project_ownership",
+        projectId: input.projectId,
+        userId,
+        supabase: supabaseErrorFields(projectError),
+      });
+      throw new AppError(
+        "PROJECT_SAVE_FAILED",
+        "We couldn't verify this project.",
+        500,
+        undefined,
+        requestId,
+      );
+    }
+
     if (!project) {
-      throw new AppError("not_found", "Project not found", 404);
+      throw new AppError("NOT_FOUND", "Project not found", 404, undefined, requestId);
     }
 
     const availability = getProviderAvailability();
     if (!availability[input.provider]) {
       throw new AppError(
-        "provider_unavailable",
-        "Image generation is temporarily unavailable.",
+        "PROVIDER_NOT_CONFIGURED",
+        "This model is not configured.",
         503,
+        undefined,
+        requestId,
       );
     }
 
-    await checkRateLimit(auth.user.id);
+    await checkRateLimit(auth.user.id, requestId);
 
     const admin = createServiceClient();
     const { data: existing } = await admin
@@ -84,8 +136,16 @@ export async function POST(req: Request) {
       .maybeSingle();
 
     if (existing) {
-      return NextResponse.json({ generation: existing });
+      return NextResponse.json({ generation: existing, requestId });
     }
+
+    logServerInfo({
+      requestId,
+      route: "POST /api/ai/generations",
+      stage: "credit_calculation",
+      userId,
+      projectId: input.projectId,
+    });
 
     const cost = calculateCreditCost({
       provider: input.provider,
@@ -96,7 +156,9 @@ export async function POST(req: Request) {
 
     const env = getServerEnv();
     const model =
-      input.provider === "openai" ? env.OPENAI_IMAGE_MODEL : env.BFL_MODEL;
+      input.provider === "openai"
+        ? resolveOpenAiImageModel(env.OPENAI_IMAGE_MODEL)
+        : env.BFL_MODEL;
 
     const { data: generation, error: insertError } = await admin
       .from("ai_generations")
@@ -127,12 +189,34 @@ export async function POST(req: Request) {
           .select("*")
           .eq("idempotency_key", input.idempotencyKey)
           .single();
-        return NextResponse.json({ generation: again });
+        return NextResponse.json({ generation: again, requestId });
       }
-      throw new AppError("create_failed", "Unable to save generation request.", 500);
+      logServerError({
+        requestId,
+        route: "POST /api/ai/generations",
+        stage: "generation_row_insert",
+        projectId: input.projectId,
+        userId,
+        supabase: supabaseErrorFields(insertError),
+      });
+      throw new AppError(
+        "GENERATION_CREATE_FAILED",
+        "Unable to save generation request.",
+        500,
+        undefined,
+        requestId,
+      );
     }
 
     generationId = generation.id;
+
+    logServerInfo({
+      requestId,
+      route: "POST /api/ai/generations",
+      stage: "credit_consumption",
+      userId,
+      generationId,
+    });
 
     await consumeCreditsAtomic({
       userId: auth.user.id,
@@ -140,7 +224,9 @@ export async function POST(req: Request) {
       idempotencyKey: `generation:${input.idempotencyKey}`,
       generationId: generation.id,
       metadata: { provider: input.provider, mode: input.mode },
+      requestId,
     });
+    creditsConsumed = true;
 
     await admin
       .from("ai_generations")
@@ -150,6 +236,14 @@ export async function POST(req: Request) {
     const provider = createImageProvider(input.provider);
     let providerResult;
 
+    logServerInfo({
+      requestId,
+      route: "POST /api/ai/generations",
+      stage: "provider_request",
+      userId,
+      generationId,
+    });
+
     if (input.mode === "generate") {
       providerResult = await provider.generate({
         prompt: input.prompt,
@@ -158,6 +252,7 @@ export async function POST(req: Request) {
         height: input.selection.height,
         quality: input.quality,
         model,
+        fit: input.fit,
       });
     } else {
       let referenceBuffer: Buffer | null = null;
@@ -188,16 +283,19 @@ export async function POST(req: Request) {
 
       if (!referenceBuffer) {
         throw new AppError(
-          "reference_required",
+          "REFERENCE_REQUIRED",
           "A reference image is required for edit or replace mode.",
           400,
+          undefined,
+          requestId,
         );
       }
 
-      const normalized = await normalizeImageSize(
+      const normalized = await fitImageToSelection(
         referenceBuffer,
         input.selection.width,
         input.selection.height,
+        "cover",
       );
       const mask = await createFullMask(
         input.selection.width,
@@ -205,10 +303,32 @@ export async function POST(req: Request) {
       );
 
       const refPath = `${auth.user.id}/${input.projectId}/${randomUUID()}.png`;
-      await admin.storage.from("user-assets").upload(refPath, normalized, {
-        contentType: "image/png",
-        upsert: false,
-      });
+      const { error: refUploadError } = await admin.storage
+        .from("user-assets")
+        .upload(refPath, normalized, {
+          contentType: "image/png",
+          upsert: false,
+        });
+
+      if (refUploadError) {
+        logServerError({
+          requestId,
+          route: "POST /api/ai/generations",
+          stage: "storage_upload",
+          projectId: input.projectId,
+          userId,
+          generationId,
+          supabase: supabaseErrorFields(refUploadError),
+        });
+        throw new AppError(
+          "STORAGE_UPLOAD_FAILED",
+          "The image was generated, but we couldn't add it to your project.",
+          500,
+          undefined,
+          requestId,
+        );
+      }
+
       const { data: refAsset } = await admin
         .from("assets")
         .insert({
@@ -242,8 +362,18 @@ export async function POST(req: Request) {
         maskPng: mask,
         model,
         mode: input.mode === "edit" ? "edit" : "replace",
+        fit: input.fit,
       });
     }
+
+    logServerInfo({
+      requestId,
+      route: "POST /api/ai/generations",
+      stage: "provider_response",
+      userId,
+      generationId,
+      code: providerResult.status,
+    });
 
     if (providerResult.providerRequestId) {
       await admin
@@ -258,16 +388,20 @@ export async function POST(req: Request) {
         generationId: generation.id,
         userId: auth.user.id,
         amount: cost,
-        errorCode: providerResult.errorCode ?? "provider_error",
+        errorCode: providerResult.errorCode ?? "PROVIDER_REQUEST_FAILED",
         errorMessage:
-          providerResult.errorMessage ?? "Generation failed. Your credits were restored.",
+          providerResult.errorMessage ??
+          "The image model couldn't complete this request. Your credits were restored.",
+        requestId,
+        shouldRefund: creditsConsumed,
       });
+      creditsConsumed = false;
       const { data: failed } = await admin
         .from("ai_generations")
         .select("*")
         .eq("id", generation.id)
         .single();
-      return NextResponse.json({ generation: failed }, { status: 422 });
+      return NextResponse.json({ generation: failed, requestId }, { status: 422 });
     }
 
     if (providerResult.status === "completed") {
@@ -278,9 +412,18 @@ export async function POST(req: Request) {
         projectId: input.projectId,
         width: input.selection.width,
         height: input.selection.height,
+        fit: input.fit,
         result: providerResult,
+        requestId,
       });
-      return NextResponse.json({ generation: completed });
+      logServerInfo({
+        requestId,
+        route: "POST /api/ai/generations",
+        stage: "generation_complete",
+        userId,
+        generationId,
+      });
+      return NextResponse.json({ generation: completed, requestId });
     }
 
     const { data: processing } = await admin
@@ -289,9 +432,9 @@ export async function POST(req: Request) {
       .eq("id", generation.id)
       .single();
 
-    return NextResponse.json({ generation: processing });
+    return NextResponse.json({ generation: processing, requestId });
   } catch (error) {
-    if (generationId && userId && creditsCharged > 0) {
+    if (generationId && userId && creditsConsumed) {
       try {
         const admin = createServiceClient();
         await failAndRefund({
@@ -299,17 +442,46 @@ export async function POST(req: Request) {
           generationId,
           userId,
           amount: creditsCharged,
-          errorCode: error instanceof AppError ? error.code : "internal_error",
+          errorCode: error instanceof AppError ? error.code : "INTERNAL_ERROR",
           errorMessage:
-            error instanceof Error
+            error instanceof AppError
               ? error.message
               : "Generation failed. Your credits were restored.",
+          requestId,
+          shouldRefund: true,
+        });
+      } catch (refundError) {
+        logServerError({
+          requestId,
+          route: "POST /api/ai/generations",
+          stage: "refund",
+          userId,
+          generationId,
+          message:
+            refundError instanceof Error ? refundError.message : "refund failed",
+        });
+      }
+    } else if (generationId && userId) {
+      try {
+        const admin = createServiceClient();
+        await failAndRefund({
+          admin,
+          generationId,
+          userId,
+          amount: 0,
+          errorCode: error instanceof AppError ? error.code : "INTERNAL_ERROR",
+          errorMessage:
+            error instanceof AppError
+              ? error.message
+              : "Generation failed.",
+          requestId,
+          shouldRefund: false,
         });
       } catch {
-        // best effort
+        // best effort status update
       }
     }
-    const res = toErrorResponse(error);
+    const res = toErrorResponse(error, requestId);
     return NextResponse.json(res.body, { status: res.status });
   }
 }

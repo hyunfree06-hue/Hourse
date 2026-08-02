@@ -30,17 +30,44 @@ const PROMPT_CHIPS = [
   "Product still life",
 ];
 
+function mapGenerationError(code?: string, fallback?: string): string {
+  switch (code) {
+    case "PROJECT_SAVE_FAILED":
+      return "We couldn't save this project. Retry the save before generating.";
+    case "INSUFFICIENT_CREDITS":
+      return "You don't have enough credits for this generation.";
+    case "PROVIDER_NOT_CONFIGURED":
+    case "provider_unavailable":
+      return "This model is not configured.";
+    case "INVALID_GENERATION_SIZE":
+      return "This selection could not be prepared for the selected model.";
+    case "PROVIDER_REQUEST_FAILED":
+    case "provider_error":
+      return "The image model couldn't complete this request. Your credits were restored.";
+    case "STORAGE_UPLOAD_FAILED":
+    case "upload_failed":
+      return "The image was generated, but we couldn't add it to your project.";
+    case "AUTH_REQUIRED":
+    case "unauthorized":
+      return "Your session has expired. Sign in again.";
+    default:
+      return fallback || "Generation failed. Please try again.";
+  }
+}
+
 type Props = {
   projectId: string;
   availability: Availability;
+  onEnsureSaved?: (force?: boolean) => Promise<boolean>;
 };
 
-export function AiPanel({ projectId, availability }: Props) {
+export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
   const aiRegion = useEditorStore((s) => s.aiRegion);
   const aiPanelOpen = useEditorStore((s) => s.aiPanelOpen);
   const credits = useEditorStore((s) => s.credits);
   const setCredits = useEditorStore((s) => s.setCredits);
   const setAiPanelOpen = useEditorStore((s) => s.setAiPanelOpen);
+  const saveStatus = useEditorStore((s) => s.saveStatus);
 
   const [prompt, setPrompt] = useState("");
   const [provider, setProvider] = useState<AiProviderId>(
@@ -158,12 +185,16 @@ export function AiPanel({ projectId, availability }: Props) {
     const scaleY = aiRegion.height / (img.height || 1);
     const scale =
       fit === "cover" ? Math.max(scaleX, scaleY) : Math.min(scaleX, scaleY);
+    // When server fitted to exact selection pixels, keep 1:1 placement.
+    const alreadyFitted =
+      Math.abs((img.width || 0) - aiRegion.width) < 1 &&
+      Math.abs((img.height || 0) - aiRegion.height) < 1;
     img.set(
       withCustomDefaults({
         left: aiRegion.left,
         top: aiRegion.top,
-        scaleX: scale,
-        scaleY: scale,
+        scaleX: alreadyFitted ? 1 : scale,
+        scaleY: alreadyFitted ? 1 : scale,
         objectRole: "generated",
         generatedBy: provider,
         generationId: gen.id,
@@ -191,11 +222,11 @@ export function AiPanel({ projectId, availability }: Props) {
       return;
     }
     if (!availability[provider]) {
-      setError("API key not configured on the server.");
+      setError("This model is not configured.");
       return;
     }
     if (credits < cost) {
-      setError("Not enough credits. Check your plan or purchase a credit pack.");
+      setError("You don't have enough credits for this generation.");
       return;
     }
 
@@ -205,6 +236,18 @@ export function AiPanel({ projectId, availability }: Props) {
     const idempotencyKey = nanoid();
 
     try {
+      if (saveStatus === "error" || saveStatus === "idle" || onEnsureSaved) {
+        const saved = onEnsureSaved ? await onEnsureSaved(true) : true;
+        if (!saved) {
+          throw Object.assign(
+            new Error(
+              "We couldn't save this project. Retry the save before generating.",
+            ),
+            { code: "PROJECT_SAVE_FAILED" },
+          );
+        }
+      }
+
       let referenceImageBase64: string | undefined;
       if (mode === "replace" || mode === "edit") {
         referenceImageBase64 = (await captureRegionPng()) ?? undefined;
@@ -219,7 +262,13 @@ export function AiPanel({ projectId, availability }: Props) {
           provider,
           quality,
           mode,
-          selection: aiRegion,
+          selection: {
+            left: aiRegion.left,
+            top: aiRegion.top,
+            width: aiRegion.width,
+            height: aiRegion.height,
+            fit,
+          },
           fit,
           idempotencyKey,
           referenceImageBase64,
@@ -227,7 +276,10 @@ export function AiPanel({ projectId, availability }: Props) {
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error?.message ?? "Generation request failed.");
+        throw Object.assign(
+          new Error(mapGenerationError(data.error?.code, data.error?.message)),
+          { code: data.error?.code },
+        );
       }
 
       const gen = data.generation;

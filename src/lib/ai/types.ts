@@ -1,4 +1,5 @@
 import type { AiMode, AiProviderId, AiQuality } from "@/config/credits";
+import type { ImageFitMode } from "./image-utils";
 
 export type GenerateImageInput = {
   prompt: string;
@@ -7,6 +8,7 @@ export type GenerateImageInput = {
   height: number;
   quality: AiQuality;
   model?: string;
+  fit?: ImageFitMode;
 };
 
 export type EditImageInput = {
@@ -19,6 +21,7 @@ export type EditImageInput = {
   maskPng?: Buffer;
   model?: string;
   mode: Extract<AiMode, "edit" | "replace">;
+  fit?: ImageFitMode;
 };
 
 export type GenerationProviderResult = {
