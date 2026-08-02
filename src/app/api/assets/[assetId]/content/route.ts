@@ -1,11 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireApiUser } from "@/lib/auth/api";
 import { createServiceClient } from "@/lib/supabase/admin";
-import {
-  detectImageKindFromBytes,
-  mimeFromImageKind,
-  signatureHexPreview,
-} from "@/lib/canvas/image-bytes";
+import { resolveStoredImageBytes } from "@/lib/assets/resolve-stored-image";
 import {
   AppError,
   createRequestId,
@@ -21,7 +17,10 @@ type Params = { params: Promise<{ assetId: string }> };
 
 /**
  * Same-origin private asset stream for Safari-safe Fabric loading.
- * Authenticated + ownership-checked. Streams real image bytes (not JSON).
+ *
+ * GET has no request body — do NOT validate request Content-Type.
+ * Validate downloaded Storage bytes (Sharp + magic), not DB mime_type.
+ * application/octet-stream / null / empty DB mime must still succeed for valid images.
  */
 export async function GET(_req: Request, { params }: Params) {
   const requestId = createRequestId();
@@ -86,28 +85,40 @@ export async function GET(_req: Request, { params }: Params) {
       );
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const kind = detectImageKindFromBytes(buffer);
+    const raw = Buffer.from(await file.arrayBuffer());
+    // Ignore DB mime / Blob.type — including application/octet-stream, null, "".
+    const resolved = await resolveStoredImageBytes(raw, { requestId });
 
-    if (!kind) {
-      logServerError({
-        requestId,
-        route: "GET /api/assets/[assetId]/content",
-        stage: "invalid_image_bytes",
-        userId: auth.user.id,
-        assetId,
-        message: `bytes=${buffer.length};sig=${signatureHexPreview(buffer, 4)};dbMime=${asset.mime_type ?? ""}`,
-      });
-      throw new AppError(
-        "INVALID_GENERATED_IMAGE_TYPE",
-        "Asset is not a valid image.",
-        415,
-        undefined,
-        requestId,
-      );
+    // Opportunistic repair: fix wrong/missing assets.mime_type without regenerating.
+    const dbMime = (asset.mime_type ?? "").trim().toLowerCase();
+    if (dbMime !== resolved.mimeType) {
+      void admin
+        .from("assets")
+        .update({ mime_type: resolved.mimeType })
+        .eq("id", asset.id)
+        .eq("user_id", auth.user.id)
+        .then(({ error: repairError }) => {
+          if (repairError) {
+            logServerError({
+              requestId,
+              route: "GET /api/assets/[assetId]/content",
+              stage: "mime_repair",
+              userId: auth.user.id,
+              assetId,
+              supabase: supabaseErrorFields(repairError),
+            });
+          } else {
+            logServerInfo({
+              requestId,
+              route: "GET /api/assets/[assetId]/content",
+              stage: "mime_repaired",
+              userId: auth.user.id,
+              assetId,
+              message: `from=${dbMime || "empty"};to=${resolved.mimeType}`,
+            });
+          }
+        });
     }
-
-    const contentType = mimeFromImageKind(kind);
 
     logServerInfo({
       requestId,
@@ -117,15 +128,14 @@ export async function GET(_req: Request, { params }: Params) {
       assetId,
       bucket: asset.storage_bucket,
       objectPath: asset.storage_path,
-      message: `bytes=${buffer.length};type=${contentType};sig=${signatureHexPreview(buffer, 4)}`,
+      message: `bytes=${resolved.bytes.length};type=${resolved.mimeType};format=${resolved.format};dbMime=${dbMime || "empty"};sig=${resolved.signature}`,
     });
 
-    // Uint8Array body — guarantees binary image bytes, not JSON.
-    return new NextResponse(new Uint8Array(buffer), {
+    return new NextResponse(new Uint8Array(resolved.bytes), {
       status: 200,
       headers: {
-        "Content-Type": contentType,
-        "Content-Length": String(buffer.length),
+        "Content-Type": resolved.mimeType,
+        "Content-Length": String(resolved.bytes.byteLength),
         "Cache-Control": "private, no-store",
         "X-Content-Type-Options": "nosniff",
         "X-Request-Id": requestId,

@@ -139,22 +139,33 @@ export function useAutosave({ projectId, initialUpdatedAt }: Props) {
         const data = await res.json();
 
         if (res.status === 409) {
-          setSaveStatus("conflict");
-          const choice = window.confirm(
-            "This project was updated in another tab.\nOK: Load the latest version from the server\nCancel: Overwrite with your version",
-          );
-          if (choice) {
-            window.location.reload();
-            return false;
+          // Same-tab stale optimistic lock — refresh server timestamp and retry once.
+          // Never treat this as an image insertion failure.
+          const serverUpdatedAt =
+            typeof data.serverUpdatedAt === "string"
+              ? data.serverUpdatedAt
+              : null;
+          if (!serverUpdatedAt) {
+            setSaveStatus("conflict");
+            throw new Error(
+              data.error?.message ??
+                "This project was updated elsewhere. Reload and try saving again.",
+            );
           }
-          updatedAtRef.current = data.serverUpdatedAt;
-          const retryPayload = buildSavePayload(api, data.serverUpdatedAt);
+          updatedAtRef.current = serverUpdatedAt;
+          const retryPayload = buildSavePayload(api, serverUpdatedAt);
           const retry = await fetch(`/api/projects/${projectId}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(retryPayload),
           });
           const retryData = await retry.json();
+          if (retry.status === 409) {
+            setSaveStatus("conflict");
+            throw new Error(
+              "This project was updated in another tab. Reload to continue saving.",
+            );
+          }
           if (!retry.ok) {
             throw new Error(
               retryData.error?.message ?? "We couldn't save this project.",

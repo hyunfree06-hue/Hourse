@@ -311,9 +311,10 @@ describe("Fabric v7 API + asset route contracts", () => {
     );
     expect(source).toContain("Cache-Control");
     expect(source).toContain("private, no-store");
-    expect(source).toContain("detectImageKindFromBytes");
+    expect(source).toContain("resolveStoredImageBytes");
     expect(source).toContain("new Uint8Array");
     expect(source).toMatch(/export async function GET/);
+    expect(source).not.toContain("415");
   });
 });
 

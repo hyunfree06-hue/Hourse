@@ -63,12 +63,19 @@ export async function completeGeneration(input: {
     input.fit ?? "cover",
   );
   const meta = await validateImageBuffer(buffer);
-  const path = `${input.userId}/${input.projectId}/${randomUUID()}.png`;
+  const mimeType =
+    meta.mimeType === "image/jpeg" || meta.mimeType === "image/webp"
+      ? meta.mimeType
+      : "image/png";
+  const extension =
+    mimeType === "image/jpeg" ? "jpg" : mimeType === "image/webp" ? "webp" : "png";
+  const path = `${input.userId}/${input.projectId}/${randomUUID()}.${extension}`;
 
   const { error: uploadError } = await input.admin.storage
     .from("generated-assets")
     .upload(path, buffer, {
-      contentType: meta.mimeType || "image/png",
+      contentType: mimeType,
+      cacheControl: "3600",
       upsert: false,
     });
 
@@ -99,7 +106,7 @@ export async function completeGeneration(input: {
       asset_type: "generated",
       storage_bucket: "generated-assets",
       storage_path: path,
-      mime_type: meta.mimeType,
+      mime_type: mimeType,
       file_size: buffer.length,
       width: Math.round(input.width),
       height: Math.round(input.height),

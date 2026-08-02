@@ -170,7 +170,7 @@ async function validateFetchedImageResponse(
 
   if (!response.ok) {
     throw new GeneratedImageLoadError(
-      `ASSET_FETCH_FAILED:${response.status}`,
+      `ASSET_CONTENT_${response.status}`,
       CANVAS_INSERT_ERROR_MESSAGE,
       {
         httpStatus: response.status,
@@ -273,6 +273,9 @@ export async function loadFabricImageForAsset(
         method: "GET",
         cache: "no-store",
         credentials: "include",
+        headers: {
+          Accept: "image/png,image/jpeg,image/webp,image/*",
+        },
       });
 
       const validated = await validateFetchedImageResponse(response, onStage, {
