@@ -19,6 +19,7 @@ import {
   fontStackFor,
   type DesignFont,
 } from "@/lib/design-scene/font-registry";
+import { mapPolygonPointsSafe } from "@/lib/design-scene/apply-operations";
 import type {
   EditableDesignObject,
   EditableDesignScene,
@@ -151,10 +152,8 @@ async function objectToFabric(
       return path;
     }
     case "polygon": {
-      const points = obj.points.map((p) => ({
-        x: scaleValue(p.x, scaleX),
-        y: scaleValue(p.y, scaleY),
-      }));
+      const points = mapPolygonPointsSafe(obj.points, scaleX, scaleY);
+      if (points.length < 3) return null;
       return new Polygon(points, {
         ...base,
         fill: obj.fill ?? undefined,
@@ -267,7 +266,13 @@ export async function insertDesignSceneToCanvas(
 
   for (const fab of topLevel) {
     canvas.add(fab);
+    fab.setCoords();
   }
+
+  const { selectCreatedDesignObjects } = await import(
+    "@/lib/design-scene/apply-operations"
+  );
+  selectCreatedDesignObjects(canvas, topLevel);
 
   canvas.requestRenderAll();
   return { objectIds, fabricObjects: topLevel };

@@ -148,13 +148,16 @@ describe("asset content route contracts", () => {
     );
     expect(conflictBlock).toContain("retry once");
     expect(conflictBlock).not.toContain("window.confirm");
-    expect(conflictBlock).toContain("Never treat this as an image insertion failure");
+    expect(conflictBlock).toContain(
+      "Never treat this as a Design insertion failure",
+    );
 
     const panel = await fs.readFile(
       path.join(process.cwd(), "src/components/editor/ai/ai-panel.tsx"),
       "utf8",
     );
     expect(panel).toContain('window.dispatchEvent(new CustomEvent("hourse:dirty"))');
+    expect(panel).toContain("Retry adding design");
     expect(panel).toContain("placeDesignScene");
     expect(panel).not.toContain("retryInsertToCanvas");
   });

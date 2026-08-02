@@ -484,7 +484,8 @@ describe("design UI contracts", () => {
     expect(panel).toContain("Generate design");
     expect(panel).toContain("Refine selection");
     expect(panel).toContain('mode: "design"');
-    expect(panel).toMatch(/objectRole[\s\S]{0,80}ai-region/);
+    expect(panel).toContain("getEditableSelection");
+    expect(panel).toContain("Retry adding design");
     expect(panel).not.toContain("MODE_LABELS");
     expect(panel).not.toContain("createBakedGeneratedFabricImage");
   });

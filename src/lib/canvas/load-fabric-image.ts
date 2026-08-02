@@ -421,6 +421,13 @@ export function sanitizeCanvasJsonForSave(json: unknown): unknown {
     objects?: Array<Record<string, unknown>>;
   };
   if (!Array.isArray(clone.objects)) return clone;
+  clone.objects = clone.objects.filter((obj) => {
+    const role = obj.objectRole;
+    const name = obj.name;
+    if (role === "ai-region") return false;
+    if (name === "AI region") return false;
+    return true;
+  });
   for (const obj of clone.objects) {
     const src = typeof obj.src === "string" ? obj.src : null;
     const ephemeral =

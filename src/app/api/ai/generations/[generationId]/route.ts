@@ -51,7 +51,24 @@ export async function GET(_req: Request, { params }: Params) {
           signedUrl = signed?.signedUrl ?? null;
         }
       }
-      return NextResponse.json({ generation: { ...generation, signedUrl } });
+
+      const graph = generation.scene_graph_json as
+        | {
+            scene?: unknown;
+            brief?: { refine?: boolean; operations?: unknown[] };
+          }
+        | null;
+
+      return NextResponse.json({
+        generation: {
+          ...generation,
+          signedUrl,
+          scene: graph?.scene ?? null,
+          operations: graph?.brief?.operations ?? null,
+          refine: Boolean(graph?.brief?.refine),
+          output_type: generation.output_type,
+        },
+      });
     }
 
     if (

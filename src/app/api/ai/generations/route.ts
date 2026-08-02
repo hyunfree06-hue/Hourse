@@ -31,6 +31,7 @@ import {
 } from "@/lib/design-scene/design-generation";
 import { fillDesignImagePlaceholders } from "@/lib/design-scene/fill-image-layers";
 import { DESIGN_SCENE_VERSION } from "@/lib/design-scene/schema";
+import { filterEditableRefinementObjects } from "@/lib/design-scene/refinement-selection";
 
 export const runtime = "nodejs";
 
@@ -198,6 +199,31 @@ export async function POST(req: Request) {
       return NextResponse.json({ generation: existing, requestId });
     }
 
+    // Design refinement intent is derived from validated editable selection only.
+    // Never trust a client "refine" flag. Reject empty/invalid refine before credits.
+    let designRefineObjects: unknown[] = [];
+    let designRefineIds: string[] = [];
+    if (input.mode === "design") {
+      const claimedRefine =
+        (input.selectedObjectIds?.length ?? 0) > 0 ||
+        (input.selectedObjects?.length ?? 0) > 0;
+      const filtered = filterEditableRefinementObjects(
+        input.selectedObjects,
+        input.selectedObjectIds,
+      );
+      if (claimedRefine && filtered.ids.length === 0) {
+        throw new AppError(
+          "INVALID_REFINEMENT_SELECTION",
+          "Select at least one editable object to refine.",
+          400,
+          undefined,
+          requestId,
+        );
+      }
+      designRefineObjects = filtered.objects;
+      designRefineIds = filtered.ids;
+    }
+
     logServerInfo({
       requestId,
       route: "POST /api/ai/generations",
@@ -305,11 +331,7 @@ export async function POST(req: Request) {
         generationId,
       });
 
-      const isRefine =
-        Array.isArray(input.selectedObjectIds) &&
-        input.selectedObjectIds.length > 0 &&
-        Array.isArray(input.selectedObjects) &&
-        input.selectedObjects.length > 0;
+      const isRefine = designRefineIds.length > 0;
 
       if (isRefine) {
         const refined = await refineEditableDesign({
@@ -317,7 +339,7 @@ export async function POST(req: Request) {
           width: input.selection.width,
           height: input.selection.height,
           quality: input.quality,
-          selectedObjects: input.selectedObjects ?? [],
+          selectedObjects: designRefineObjects,
           nearbySummary: input.nearbySummary,
           selectedBounds: {
             left: input.selection.left,
@@ -336,6 +358,7 @@ export async function POST(req: Request) {
           model: designFormats?.model,
         });
 
+        // Persist operations so the client can retry apply without recharging.
         const completed = await completeDesignGeneration({
           admin,
           generationId: generation.id,
@@ -377,7 +400,11 @@ export async function POST(req: Request) {
               },
             ],
           },
-          brief: { refine: true, operations: refined.operations },
+          brief: {
+            refine: true,
+            operations: refined.operations,
+            selectedObjectIds: designRefineIds,
+          },
           requestId,
         });
 
@@ -395,6 +422,14 @@ export async function POST(req: Request) {
             operations: refined.operations,
             output_type: "editable_design",
             refine: true,
+            scene_graph_json: {
+              scene: null,
+              brief: {
+                refine: true,
+                operations: refined.operations,
+                selectedObjectIds: designRefineIds,
+              },
+            },
           },
           requestId,
         });

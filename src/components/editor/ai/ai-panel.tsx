@@ -19,6 +19,14 @@ import { createObjectId } from "@/lib/canvas/custom-properties";
 import type { EditableDesignScene } from "@/lib/design-scene/schema";
 import type { DesignOperation } from "@/lib/design-scene/schema";
 import { fabricObjectsToSceneObjects } from "@/lib/design-scene/fabric-to-scene";
+import {
+  getEditableSelection,
+} from "@/lib/canvas/editable-selection";
+import {
+  DesignApplyError,
+  applyDesignOperationsToCanvas,
+  logDesignApplyError,
+} from "@/lib/design-scene/apply-operations";
 
 type Availability = { openai: boolean; bfl: boolean };
 
@@ -30,12 +38,17 @@ const PROMPT_CHIPS = [
   "Product graphic",
 ];
 
+const APPLY_ERROR_MESSAGE =
+  "The design was created, but we couldn't add it to the canvas.";
+
 function mapGenerationError(code?: string, fallback?: string): string {
   switch (code) {
     case "PROJECT_SAVE_FAILED":
       return "We couldn't save this project. Retry the save before generating.";
     case "INSUFFICIENT_CREDITS":
       return "You don't have enough credits for this generation.";
+    case "INVALID_REFINEMENT_SELECTION":
+      return "Select at least one editable object to refine.";
     case "DESIGN_SCHEMA_INVALID":
     case "DESIGN_MODEL_NOT_CONFIGURED":
       return "Design generation is temporarily unavailable. Your credits were restored.";
@@ -58,6 +71,23 @@ type Props = {
   onEnsureSaved?: (force?: boolean) => Promise<boolean>;
 };
 
+type PendingApply = {
+  generationId: string;
+  refine: boolean;
+  operations?: DesignOperation[];
+  scene?: EditableDesignScene;
+  imageAssets?: Record<
+    string,
+    { assetId: string; signedUrl: string | null; bucket: string; path: string }
+  >;
+  selection: {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  };
+};
+
 function getHourseApi(): {
   canvas: Canvas;
   history?: { save: () => void };
@@ -69,51 +99,6 @@ function getHourseApi(): {
       }
     ).__hourse ?? null
   );
-}
-
-function collectSelectedFabricObjects(canvas: Canvas): FabricObject[] {
-  const active = canvas.getActiveObject();
-  if (!active) return [];
-  if (active.type === "activeSelection" && "getObjects" in active) {
-    return (active as unknown as { getObjects: () => FabricObject[] }).getObjects();
-  }
-  return [active];
-}
-
-function applyRefineOperations(canvas: Canvas, operations: DesignOperation[]) {
-  const byId = new Map<string, FabricObject>();
-  canvas.getObjects().forEach((obj) => {
-    const id = (obj as FabricObject & { objectId?: string }).objectId;
-    if (id) byId.set(id, obj);
-  });
-
-  for (const op of operations) {
-    if (op.type === "delete") {
-      const target = byId.get(op.objectId);
-      if (target) canvas.remove(target);
-      continue;
-    }
-    if (op.type === "reorder") {
-      const target = byId.get(op.objectId);
-      if (!target) continue;
-      canvas.moveObjectTo?.(target, op.layerIndex);
-      continue;
-    }
-    if (op.type === "update") {
-      const target = byId.get(op.objectId);
-      if (!target) continue;
-      const changes = { ...op.changes } as Record<string, unknown>;
-      delete changes.id;
-      delete changes.type;
-      if ("letterSpacing" in changes) {
-        changes.charSpacing = changes.letterSpacing;
-        delete changes.letterSpacing;
-      }
-      target.set(changes);
-      target.setCoords();
-    }
-  }
-  canvas.requestRenderAll();
 }
 
 export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
@@ -129,30 +114,31 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
   const [prompt, setPrompt] = useState("");
   const [quality, setQuality] = useState<AiQuality>("standard");
   const [loading, setLoading] = useState(false);
+  const [applying, setApplying] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-
+  const [pendingApply, setPendingApply] = useState<PendingApply | null>(null);
   const [selectionEpoch, setSelectionEpoch] = useState(0);
 
   useEffect(() => {
     const bump = () => setSelectionEpoch((n) => n + 1);
     window.addEventListener("hourse:dirty", bump);
-    return () => window.removeEventListener("hourse:dirty", bump);
+    window.addEventListener("selection:created", bump as EventListener);
+    return () => {
+      window.removeEventListener("hourse:dirty", bump);
+    };
   }, []);
 
-  const isRefine = useMemo(() => {
+  const editableSelection = useMemo(() => {
     void selected;
     void selectionEpoch;
-    if (typeof window === "undefined") return false;
+    if (typeof window === "undefined") return [] as FabricObject[];
     const api = getHourseApi();
-    if (!api) return false;
-    const selectedObjects = collectSelectedFabricObjects(api.canvas).filter(
-      (obj) =>
-        (obj as FabricObject & { objectRole?: string }).objectRole !==
-        "ai-region",
-    );
-    return selectedObjects.length > 0;
+    if (!api) return [];
+    return getEditableSelection(api.canvas);
   }, [selected, selectionEpoch]);
+
+  const isRefine = editableSelection.length > 0;
 
   const cost = useMemo(
     () =>
@@ -170,13 +156,10 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
     scene: EditableDesignScene,
     generationId: string,
     selection: { left: number; top: number; width: number; height: number },
-    imageAssets?: Record<
-      string,
-      { assetId: string; signedUrl: string | null; bucket: string; path: string }
-    >,
+    imageAssets?: PendingApply["imageAssets"],
   ) {
     const api = getHourseApi();
-    if (!api) throw new Error("Canvas unavailable");
+    if (!api) throw new DesignApplyError("CANVAS_UNAVAILABLE", "Canvas unavailable");
 
     const { insertDesignSceneToCanvas, scaleSceneToRegion } = await import(
       "@/lib/design-scene/scene-to-fabric"
@@ -194,7 +177,7 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
       }
     }
 
-    const { objectIds } = await insertDesignSceneToCanvas(
+    const { fabricObjects } = await insertDesignSceneToCanvas(
       api.canvas,
       scene,
       {
@@ -208,7 +191,6 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
       imageUrlById,
     );
 
-    // Attach asset metadata for image layers
     if (imageAssets) {
       api.canvas.getObjects().forEach((obj) => {
         const id = (obj as FabricObject & { objectId?: string }).objectId;
@@ -224,31 +206,117 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
 
     const regions = api.canvas
       .getObjects()
-      .filter(
-        (obj) =>
-          (obj as FabricObject & { objectRole?: string }).objectRole ===
-          "ai-region",
-      );
+      .filter((obj) => {
+        const role = (obj as FabricObject & { objectRole?: string }).objectRole;
+        const name = (obj as FabricObject & { name?: string }).name;
+        return role === "ai-region" || name === "AI region";
+      });
     if (regions.length) {
       api.canvas.remove(...regions);
       setAiRegion(null);
     }
 
+    for (const object of fabricObjects) {
+      object.setCoords();
+    }
+
     api.history?.save();
     api.canvas.requestRenderAll();
     window.dispatchEvent(new CustomEvent("hourse:dirty"));
-    return objectIds;
+    return fabricObjects;
+  }
+
+  async function applyCompletedGeneration(
+    pending: PendingApply,
+    editableSelectionCount: number,
+  ) {
+    const api = getHourseApi();
+    if (!api) {
+      throw new DesignApplyError("CANVAS_UNAVAILABLE", "Canvas unavailable");
+    }
+
+    try {
+      if (pending.refine && pending.operations) {
+        await applyDesignOperationsToCanvas(api.canvas, pending.operations, {
+          generationId: pending.generationId,
+          editableSelectionCount,
+        });
+        api.history?.save();
+        window.dispatchEvent(new CustomEvent("hourse:dirty"));
+        return;
+      }
+
+      if (pending.scene) {
+        await placeDesignScene(
+          pending.scene,
+          pending.generationId,
+          pending.selection,
+          pending.imageAssets,
+        );
+        return;
+      }
+
+      throw new DesignApplyError(
+        "EMPTY_OPERATIONS",
+        "No design payload to apply",
+      );
+    } catch (error) {
+      logDesignApplyError({
+        generationId: pending.generationId,
+        applicationStage: "apply_completed_generation",
+        error,
+        createdObjectCount: 0,
+        editableSelectionCount,
+        operationType: pending.refine ? "refine" : "create",
+      });
+      throw error;
+    }
+  }
+
+  async function retryApplyToCanvas() {
+    if (!pendingApply) return;
+    setApplying(true);
+    setError(null);
+    setStatus("Adding design to canvas…");
+    try {
+      // Prefer server-stored payload (0 credits, no OpenAI).
+      const res = await fetch(
+        `/api/ai/generations/${pendingApply.generationId}`,
+      );
+      const data = await res.json();
+      const gen = data.generation;
+      const next: PendingApply = {
+        ...pendingApply,
+        operations: Array.isArray(gen?.operations)
+          ? gen.operations
+          : pendingApply.operations,
+        scene: (gen?.scene as EditableDesignScene | undefined) ?? pendingApply.scene,
+        refine: Boolean(gen?.refine ?? pendingApply.refine),
+      };
+      await applyCompletedGeneration(next, editableSelection.length);
+      setPendingApply(null);
+      setStatus(null);
+      toast.success(
+        next.refine ? "Design updated." : "Design added to canvas.",
+      );
+    } catch (err) {
+      logDesignApplyError({
+        generationId: pendingApply.generationId,
+        applicationStage: "retry_apply",
+        error: err,
+        editableSelectionCount: editableSelection.length,
+      });
+      setError(APPLY_ERROR_MESSAGE);
+      toast.error(APPLY_ERROR_MESSAGE);
+    } finally {
+      setApplying(false);
+      setStatus(null);
+    }
   }
 
   async function handleGenerate() {
     const api = getHourseApi();
-    const selectedObjects = api
-      ? collectSelectedFabricObjects(api.canvas).filter(
-          (obj) =>
-            (obj as FabricObject & { objectRole?: string }).objectRole !==
-            "ai-region",
-        )
-      : [];
+    const selectedObjects = api ? getEditableSelection(api.canvas) : [];
     const refining = selectedObjects.length > 0;
 
     if (!refining && !aiRegion) {
@@ -266,7 +334,10 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
 
     setLoading(true);
     setError(null);
-    setStatus("Creating your design…");
+    setPendingApply(null);
+    setStatus(
+      refining ? "Refining your design…" : "Creating your design…",
+    );
     const idempotencyKey = nanoid();
     const previousCredits = credits;
 
@@ -357,34 +428,58 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
       const gen = data.generation;
       setCredits(Math.max(0, credits - cost));
 
-      if (gen.refine && Array.isArray(gen.operations) && api) {
-        applyRefineOperations(api.canvas, gen.operations);
-        api.history?.save();
-        window.dispatchEvent(new CustomEvent("hourse:dirty"));
+      const pending: PendingApply = {
+        generationId: gen.id,
+        refine: Boolean(gen.refine),
+        operations: Array.isArray(gen.operations) ? gen.operations : undefined,
+        scene: gen.scene as EditableDesignScene | undefined,
+        imageAssets: gen.imageAssets,
+        selection: {
+          left: selectionSnapshot.left,
+          top: selectionSnapshot.top,
+          width: selectionSnapshot.width,
+          height: selectionSnapshot.height,
+        },
+      };
+
+      try {
+        await applyCompletedGeneration(pending, selectedObjects.length);
+        setPendingApply(null);
         setStatus(null);
-        toast.success("Design updated.");
-      } else if (gen.scene) {
-        await placeDesignScene(
-          gen.scene as EditableDesignScene,
-          gen.id,
-          selectionSnapshot,
-          gen.imageAssets,
+        toast.success(
+          pending.refine ? "Design updated." : "Design added to canvas.",
         );
-        setStatus(null);
-        toast.success("Design added to canvas.");
-      } else {
-        throw new Error(
-          "We couldn't create this design. Your credits were restored.",
-        );
+      } catch (applyError) {
+        setPendingApply(pending);
+        setStatus("insertion_failed");
+        setError(APPLY_ERROR_MESSAGE);
+        toast.error(APPLY_ERROR_MESSAGE);
+        // Credits already charged for a completed generation — do not restore.
+        setCredits(Math.max(0, credits - cost));
+        logDesignApplyError({
+          generationId: gen.id,
+          applicationStage: "post_generation_apply",
+          error: applyError,
+          editableSelectionCount: selectedObjects.length,
+        });
       }
     } catch (err) {
       const message =
         err instanceof Error
-          ? err.message
+          ? mapGenerationError(
+              (err as { code?: string }).code,
+              err.message,
+            )
           : "We couldn't create this design. Your credits were restored.";
-      setError(message);
+      // Safari: "null is not an object (evaluating 't.x')"
+      const looksLikeRawJs =
+        /TypeError|Cannot read propert|is not an object \(evaluating/i.test(
+          message,
+        );
+      const safeMessage = looksLikeRawJs ? APPLY_ERROR_MESSAGE : message;
+      setError(safeMessage);
       setStatus(null);
-      toast.error(message);
+      toast.error(safeMessage);
       setCredits(previousCredits);
     } finally {
       setLoading(false);
@@ -475,15 +570,26 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
           </span>
         </div>
 
-        {status && (
+        {status && status !== "insertion_failed" && (
           <p className="text-[11px] text-neutral-500" aria-live="polite">
             {status}
           </p>
         )}
         {error && (
-          <p className="text-[11px] text-red-600" role="alert">
-            {error}
-          </p>
+          <div className="space-y-2" role="alert">
+            <p className="text-[11px] text-red-600">{error}</p>
+            {pendingApply ? (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-[11px]"
+                loading={applying}
+                onClick={() => void retryApplyToCanvas()}
+              >
+                Retry adding design
+              </Button>
+            ) : null}
+          </div>
         )}
 
         <Button
@@ -493,7 +599,9 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
           onClick={() => void handleGenerate()}
         >
           {loading
-            ? "Creating your design…"
+            ? isRefine
+              ? "Refining your design…"
+              : "Creating your design…"
             : isRefine
               ? "Refine selection"
               : "Generate design"}

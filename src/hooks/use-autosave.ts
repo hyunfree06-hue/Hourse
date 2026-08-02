@@ -81,22 +81,26 @@ export function useAutosave({ projectId, initialUpdatedAt }: Props) {
   const dirtyRef = useRef(false);
   const lastThumbRef = useRef(0);
   const savingRef = useRef(false);
+  const queuedForceRef = useRef(false);
   const failureCooldownRef = useRef(0);
+
+  useEffect(() => {
+    updatedAtRef.current = initialUpdatedAt;
+  }, [initialUpdatedAt]);
 
   const backupKey = `${editorConfig.localBackupPrefix}${projectId}`;
 
   const save = useCallback(
     async (force = false): Promise<boolean> => {
-      if (savingRef.current) return false;
+      if (savingRef.current) {
+        if (force) queuedForceRef.current = true;
+        return false;
+      }
       const api = getHourseApi();
       if (!api) return false;
       if (!dirtyRef.current && !force) return true;
 
-      // Avoid tight autosave retry loops after a hard failure
-      if (
-        !force &&
-        failureCooldownRef.current > Date.now()
-      ) {
+      if (!force && failureCooldownRef.current > Date.now()) {
         return false;
       }
 
@@ -140,7 +144,7 @@ export function useAutosave({ projectId, initialUpdatedAt }: Props) {
 
         if (res.status === 409) {
           // Same-tab stale optimistic lock — refresh server timestamp and retry once.
-          // Never treat this as an image insertion failure.
+          // Never treat this as a Design insertion failure.
           const serverUpdatedAt =
             typeof data.serverUpdatedAt === "string"
               ? data.serverUpdatedAt
@@ -201,16 +205,26 @@ export function useAutosave({ projectId, initialUpdatedAt }: Props) {
         }
         return true;
       } catch (error) {
-        setSaveStatus("error");
-        failureCooldownRef.current = Date.now() + 8_000;
-        toast.error(
+        const message =
           error instanceof Error
             ? error.message
-            : "We couldn't save this project.",
-        );
+            : "We couldn't save this project.";
+        if (useEditorStore.getState().saveStatus !== "conflict") {
+          setSaveStatus("error");
+        }
+        failureCooldownRef.current = Date.now() + 8_000;
+        toast.error(message);
         return false;
       } finally {
         savingRef.current = false;
+        if (queuedForceRef.current) {
+          queuedForceRef.current = false;
+          // Defer without capturing `save` recursively inside this closure body
+          // in a way that breaks React Compiler memoization analysis.
+          queueMicrotask(() => {
+            window.dispatchEvent(new CustomEvent("hourse:force-save"));
+          });
+        }
       }
     },
     [backupKey, projectId, setSaveStatus],

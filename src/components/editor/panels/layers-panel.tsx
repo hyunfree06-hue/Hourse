@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import type { FabricObject } from "fabric";
 import { cn } from "@/lib/utils/cn";
+import { isEditableDesignObject } from "@/lib/canvas/editable-selection";
 
 type LayerRow = {
   objectId: string;
@@ -65,7 +66,7 @@ function readLayers(): LayerRow[] {
   if (!api) return [];
   return api.canvas
     .getObjects()
-    .filter((o) => o.objectRole !== "ai-region")
+    .filter((o) => isEditableDesignObject(o))
     .map((o, index) => ({
       objectId: o.objectId ?? `anon-${index}`,
       name: o.name || o.type || `Layer ${index + 1}`,
