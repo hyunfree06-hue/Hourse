@@ -7,4 +7,13 @@ export {
   refineEditableDesign,
   applyDesignOperations,
   resolveOpenAiDesignModel,
+  preflightDesignStructuredOutputs,
 } from "@/lib/design-scene/design-generation";
+export {
+  createDesignResponseFormat,
+  createDesignResponseFormats,
+  createDesignBriefResponseFormat,
+  createDesignSceneResponseFormat,
+  createDesignOperationsResponseFormat,
+  assertOpenAiStrictJsonSchema,
+} from "@/lib/design-scene/schema";

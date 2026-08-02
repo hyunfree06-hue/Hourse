@@ -50,7 +50,7 @@ function commonProps(
     designBlockId: opts.designBlockId,
     sourceType: "ai-design",
     generationId: opts.generationId,
-    semanticRole: obj.semanticRole,
+    semanticRole: obj.semanticRole ?? undefined,
     objectRole: "design",
     locked: obj.locked,
     left: opts.offsetLeft + scaleValue(obj.left, scaleX),

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { nanoid } from "nanoid";
 import { toast } from "sonner";
 import { X } from "lucide-react";
@@ -36,8 +36,10 @@ function mapGenerationError(code?: string, fallback?: string): string {
       return "We couldn't save this project. Retry the save before generating.";
     case "INSUFFICIENT_CREDITS":
       return "You don't have enough credits for this generation.";
-    case "PROVIDER_NOT_CONFIGURED":
+    case "DESIGN_SCHEMA_INVALID":
     case "DESIGN_MODEL_NOT_CONFIGURED":
+      return "Design generation is temporarily unavailable. Your credits were restored.";
+    case "PROVIDER_NOT_CONFIGURED":
       return "Design generation is not configured.";
     case "AUTH_REQUIRED":
     case "unauthorized":
@@ -130,7 +132,28 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const isRefine = Boolean(selected?.objectId);
+  const [selectionEpoch, setSelectionEpoch] = useState(0);
+
+  useEffect(() => {
+    const bump = () => setSelectionEpoch((n) => n + 1);
+    window.addEventListener("hourse:dirty", bump);
+    return () => window.removeEventListener("hourse:dirty", bump);
+  }, []);
+
+  const isRefine = useMemo(() => {
+    void selected;
+    void selectionEpoch;
+    if (typeof window === "undefined") return false;
+    const api = getHourseApi();
+    if (!api) return false;
+    const selectedObjects = collectSelectedFabricObjects(api.canvas).filter(
+      (obj) =>
+        (obj as FabricObject & { objectRole?: string }).objectRole !==
+        "ai-region",
+    );
+    return selectedObjects.length > 0;
+  }, [selected, selectionEpoch]);
+
   const cost = useMemo(
     () =>
       calculateCreditCost({
@@ -219,7 +242,13 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
 
   async function handleGenerate() {
     const api = getHourseApi();
-    const selectedObjects = api ? collectSelectedFabricObjects(api.canvas) : [];
+    const selectedObjects = api
+      ? collectSelectedFabricObjects(api.canvas).filter(
+          (obj) =>
+            (obj as FabricObject & { objectRole?: string }).objectRole !==
+            "ai-region",
+        )
+      : [];
     const refining = selectedObjects.length > 0;
 
     if (!refining && !aiRegion) {

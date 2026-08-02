@@ -26,8 +26,8 @@ import {
 } from "@/lib/ai/generation-service";
 import {
   generateEditableDesign,
+  preflightDesignStructuredOutputs,
   refineEditableDesign,
-  resolveOpenAiDesignModel,
 } from "@/lib/design-scene/design-generation";
 import { fillDesignImagePlaceholders } from "@/lib/design-scene/fill-image-layers";
 import { DESIGN_SCENE_VERSION } from "@/lib/design-scene/schema";
@@ -124,6 +124,9 @@ export async function POST(req: Request) {
     }
 
     const availability = getProviderAvailability();
+    let designFormats: ReturnType<typeof preflightDesignStructuredOutputs> | null =
+      null;
+
     if (input.mode === "design") {
       if (!hasOpenAiKey()) {
         throw new AppError(
@@ -134,7 +137,44 @@ export async function POST(req: Request) {
           requestId,
         );
       }
-      resolveOpenAiDesignModel();
+
+      logServerInfo({
+        requestId,
+        route: "POST /api/ai/generations",
+        stage: "structured_output_schema",
+        userId,
+        projectId: input.projectId,
+      });
+
+      // Construct + validate Structured Outputs BEFORE any credit mutation.
+      try {
+        designFormats = preflightDesignStructuredOutputs();
+      } catch (error) {
+        logServerError({
+          requestId,
+          route: "POST /api/ai/generations",
+          stage: "structured_output_schema",
+          userId,
+          projectId: input.projectId,
+          code:
+            error instanceof AppError ? error.code : "DESIGN_SCHEMA_INVALID",
+          message:
+            error instanceof AppError
+              ? String(error.details ?? error.message)
+              : error instanceof Error
+                ? error.message
+                : "schema preflight failed",
+        });
+        throw error instanceof AppError
+          ? error
+          : new AppError(
+              "DESIGN_SCHEMA_INVALID",
+              "Design generation is temporarily unavailable. Your credits were restored.",
+              503,
+              undefined,
+              requestId,
+            );
+      }
     } else if (!availability[input.provider]) {
       throw new AppError(
         "PROVIDER_NOT_CONFIGURED",
@@ -176,7 +216,7 @@ export async function POST(req: Request) {
     const env = getServerEnv();
     const model =
       input.mode === "design"
-        ? resolveOpenAiDesignModel()
+        ? designFormats!.model
         : input.provider === "openai"
           ? resolveOpenAiImageModel(env.OPENAI_IMAGE_MODEL)
           : env.BFL_MODEL;
@@ -286,6 +326,14 @@ export async function POST(req: Request) {
             height: input.selection.height,
           },
           requestId,
+          formats: designFormats
+            ? {
+                brief: designFormats.brief,
+                scene: designFormats.scene,
+                operations: designFormats.operations,
+              }
+            : undefined,
+          model: designFormats?.model,
         });
 
         const completed = await completeDesignGeneration({
@@ -321,6 +369,7 @@ export async function POST(req: Request) {
                 locked: true,
                 layerIndex: 0,
                 parentId: null,
+                semanticRole: null,
                 fill: null,
                 stroke: null,
                 strokeWidth: 0,
@@ -357,6 +406,14 @@ export async function POST(req: Request) {
         height: input.selection.height,
         quality: input.quality,
         requestId,
+        formats: designFormats
+          ? {
+              brief: designFormats.brief,
+              scene: designFormats.scene,
+              operations: designFormats.operations,
+            }
+          : undefined,
+        model: designFormats?.model,
       });
       const brief = generated.brief;
       const scene = generated.scene;
@@ -601,6 +658,32 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ generation: processing, requestId });
   } catch (error) {
+    const errorCode =
+      error instanceof AppError ? error.code : "INTERNAL_ERROR";
+    const userMessage =
+      errorCode === "DESIGN_SCHEMA_INVALID"
+        ? "Design generation is temporarily unavailable. Your credits were restored."
+        : error instanceof AppError
+          ? error.message
+          : "We couldn't create this design. Your credits were restored.";
+
+    if (errorCode === "DESIGN_SCHEMA_INVALID") {
+      logServerError({
+        requestId,
+        route: "POST /api/ai/generations",
+        stage: "structured_output_schema",
+        userId,
+        generationId,
+        code: "DESIGN_SCHEMA_INVALID",
+        message:
+          error instanceof AppError
+            ? String(error.details ?? error.message)
+            : error instanceof Error
+              ? error.message
+              : "schema invalid",
+      });
+    }
+
     if (generationId && userId && creditsConsumed) {
       try {
         const admin = createServiceClient();
@@ -609,11 +692,8 @@ export async function POST(req: Request) {
           generationId,
           userId,
           amount: creditsCharged,
-          errorCode: error instanceof AppError ? error.code : "INTERNAL_ERROR",
-          errorMessage:
-            error instanceof AppError
-              ? error.message
-              : "We couldn't create this design. Your credits were restored.",
+          errorCode,
+          errorMessage: userMessage,
           requestId,
           shouldRefund: true,
         });
@@ -636,9 +716,8 @@ export async function POST(req: Request) {
           generationId,
           userId,
           amount: 0,
-          errorCode: error instanceof AppError ? error.code : "INTERNAL_ERROR",
-          errorMessage:
-            error instanceof AppError ? error.message : "Generation failed.",
+          errorCode,
+          errorMessage: userMessage,
           requestId,
           shouldRefund: false,
         });
@@ -646,7 +725,26 @@ export async function POST(req: Request) {
         // best effort status update
       }
     }
-    const res = toErrorResponse(error, requestId);
+
+    if (error instanceof AppError && errorCode === "DESIGN_SCHEMA_INVALID") {
+      return NextResponse.json(
+        {
+          error: {
+            code: "DESIGN_SCHEMA_INVALID",
+            message: userMessage,
+            requestId,
+          },
+        },
+        { status: 503 },
+      );
+    }
+
+    const res = toErrorResponse(
+      error instanceof AppError
+        ? new AppError(error.code, userMessage, error.status, error.details, requestId)
+        : error,
+      requestId,
+    );
     return NextResponse.json(res.body, { status: res.status });
   }
 }

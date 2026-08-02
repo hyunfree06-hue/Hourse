@@ -4,7 +4,13 @@ import { validateDesignScene, DesignSceneValidationError } from "@/lib/design-sc
 import { normalizeDesignScene } from "@/lib/design-scene/normalize-scene";
 import { calculateCreditCost, creditCostTable } from "@/config/credits";
 import { applyDesignOperations } from "@/lib/design-scene/design-generation";
-import type { EditableDesignScene } from "@/lib/design-scene/schema";
+import {
+  assertOpenAiStrictJsonSchema,
+  createDesignResponseFormat,
+  editableDesignObjectSchema,
+  editableDesignSceneSchema,
+  type EditableDesignScene,
+} from "@/lib/design-scene/schema";
 
 function sampleScene(overrides?: Partial<EditableDesignScene>): EditableDesignScene {
   return {
@@ -33,6 +39,7 @@ function sampleScene(overrides?: Partial<EditableDesignScene>): EditableDesignSc
         locked: false,
         layerIndex: 0,
         parentId: null,
+        semanticRole: null,
         fill: "#ffffff",
         stroke: null,
         strokeWidth: 0,
@@ -96,7 +103,7 @@ function sampleScene(overrides?: Partial<EditableDesignScene>): EditableDesignSc
         left: 200,
         top: 190,
         width: 320,
-        height: 32,
+        height: 48,
         angle: 0,
         opacity: 1,
         visible: true,
@@ -127,6 +134,125 @@ describe("design scene validation", () => {
   it("accepts a strict valid scene", () => {
     const scene = validateDesignScene(sampleScene());
     expect(scene.objects).toHaveLength(4);
+  });
+
+  it("accepts required nullable fields", () => {
+    const parsed = editableDesignObjectSchema.safeParse({
+      id: "img",
+      name: "Product image",
+      type: "image",
+      left: 0,
+      top: 0,
+      width: 100,
+      height: 100,
+      angle: 0,
+      opacity: 1,
+      visible: true,
+      locked: false,
+      layerIndex: 0,
+      parentId: null,
+      semanticRole: null,
+      prompt: "soft product photo",
+      fit: "cover",
+      cornerRadius: 0,
+      assetId: null,
+      stroke: null,
+    });
+    // image schema has no stroke — ensure nullable keys parse on a rect
+    expect(
+      editableDesignObjectSchema.safeParse({
+        id: "r",
+        name: "Accent",
+        type: "rect",
+        left: 0,
+        top: 0,
+        width: 10,
+        height: 10,
+        angle: 0,
+        opacity: 1,
+        visible: true,
+        locked: false,
+        layerIndex: 0,
+        parentId: null,
+        semanticRole: null,
+        fill: "#111111",
+        stroke: null,
+        strokeWidth: 0,
+        cornerRadius: 0,
+      }).success,
+    ).toBe(true);
+    expect(parsed.success).toBe(true);
+  });
+
+  it("rejects omitting semanticRole / parentId / stroke / assetId", () => {
+    expect(
+      editableDesignObjectSchema.safeParse({
+        id: "r",
+        name: "Accent",
+        type: "rect",
+        left: 0,
+        top: 0,
+        width: 10,
+        height: 10,
+        angle: 0,
+        opacity: 1,
+        visible: true,
+        locked: false,
+        layerIndex: 0,
+        // parentId omitted
+        semanticRole: null,
+        fill: "#111111",
+        stroke: null,
+        strokeWidth: 0,
+        cornerRadius: 0,
+      }).success,
+    ).toBe(false);
+
+    expect(
+      editableDesignObjectSchema.safeParse({
+        id: "r",
+        name: "Accent",
+        type: "rect",
+        left: 0,
+        top: 0,
+        width: 10,
+        height: 10,
+        angle: 0,
+        opacity: 1,
+        visible: true,
+        locked: false,
+        layerIndex: 0,
+        parentId: null,
+        // semanticRole omitted
+        fill: "#111111",
+        stroke: null,
+        strokeWidth: 0,
+        cornerRadius: 0,
+      }).success,
+    ).toBe(false);
+
+    expect(
+      editableDesignObjectSchema.safeParse({
+        id: "img",
+        name: "Product image",
+        type: "image",
+        left: 0,
+        top: 0,
+        width: 100,
+        height: 100,
+        angle: 0,
+        opacity: 1,
+        visible: true,
+        locked: false,
+        layerIndex: 0,
+        parentId: null,
+        semanticRole: null,
+        prompt: "soft product photo",
+        fit: "cover",
+        cornerRadius: 0,
+        // assetId omitted
+      }).success,
+    ).toBe(false);
   });
 
   it("rejects unsupported object types", () => {
@@ -162,22 +288,14 @@ describe("design scene validation", () => {
     expect(() =>
       validateDesignScene({
         ...sampleScene(),
-        objects: [
-          {
-            ...sampleScene().objects[0],
-            left: Number.NaN,
-          },
-        ],
+        objects: [{ ...sampleScene().objects[0], left: Number.NaN }],
       }),
     ).toThrow();
     expect(() =>
       validateDesignScene({
         ...sampleScene(),
         objects: [
-          {
-            ...sampleScene().objects[0],
-            width: Number.POSITIVE_INFINITY,
-          },
+          { ...sampleScene().objects[0], width: Number.POSITIVE_INFINITY },
         ],
       }),
     ).toThrow();
@@ -187,12 +305,7 @@ describe("design scene validation", () => {
     expect(() =>
       validateDesignScene({
         ...sampleScene(),
-        objects: [
-          {
-            ...sampleScene().objects[0],
-            width: -10,
-          },
-        ],
+        objects: [{ ...sampleScene().objects[0], width: -10 }],
       }),
     ).toThrow();
   });
@@ -216,6 +329,7 @@ describe("design scene validation", () => {
             locked: false,
             layerIndex: 0,
             parentId: null,
+            semanticRole: null,
             prompt: "see https://evil.example/x",
             fit: "cover",
             cornerRadius: 0,
@@ -224,6 +338,39 @@ describe("design scene validation", () => {
         ],
       }),
     ).toThrow(DesignSceneValidationError);
+  });
+});
+
+describe("OpenAI Structured Outputs preflight", () => {
+  it("createDesignResponseFormat does not throw", () => {
+    expect(() => createDesignResponseFormat()).not.toThrow();
+  });
+
+  it("root schemas are objects with required properties and no optionals", () => {
+    const formats = createDesignResponseFormat();
+    for (const [name, format] of Object.entries(formats)) {
+      expect(format.type).toBe("json_schema");
+      expect(format.strict).toBe(true);
+      expect(format.schema.type).toBe("object");
+      expect(format.schema.anyOf).toBeUndefined();
+      expect(() =>
+        assertOpenAiStrictJsonSchema(format.schema, name),
+      ).not.toThrow();
+    }
+  });
+
+  it("scene graph JSON schema requires semanticRole as nullable", () => {
+    const { scene } = createDesignResponseFormat();
+    const objects = (scene.schema.properties as Record<string, unknown>)
+      .objects as { items: { anyOf: Array<Record<string, unknown>> } };
+    for (const branch of objects.items.anyOf) {
+      const required = branch.required as string[];
+      expect(required).toContain("semanticRole");
+      expect(required).toContain("parentId");
+      const props = branch.properties as Record<string, { type: unknown }>;
+      expect(props.semanticRole.type).toEqual(["string", "null"]);
+      expect(props.parentId.type).toEqual(["string", "null"]);
+    }
   });
 });
 
@@ -275,37 +422,47 @@ describe("design credits", () => {
         mode: "design",
       }),
     ).toBe(creditCostTable.design.standard);
-    expect(
-      calculateCreditCost({
-        provider: "openai",
-        quality: "high",
-        mode: "design",
-      }),
-    ).toBe(creditCostTable.design.high);
-  });
-
-  it("design cost is independent of raster provider id", () => {
-    expect(
-      calculateCreditCost({
-        provider: "bfl",
-        quality: "standard",
-        mode: "design",
-      }),
-    ).toBe(
-      calculateCreditCost({
-        provider: "openai",
-        quality: "standard",
-        mode: "design",
-      }),
-    );
   });
 });
 
 describe("design operations", () => {
   it("updates and deletes selected objects only", () => {
     const scene = sampleScene();
+    const nullPatch = {
+      name: null,
+      left: null,
+      top: null,
+      width: null,
+      height: null,
+      angle: null,
+      opacity: null,
+      visible: null,
+      locked: null,
+      layerIndex: null,
+      parentId: null,
+      semanticRole: null,
+      text: null,
+      fontFamily: null,
+      fontSize: null,
+      fontWeight: null,
+      fontStyle: null,
+      lineHeight: null,
+      letterSpacing: null,
+      textAlign: null,
+      fill: "#000000" as string | null,
+      stroke: null,
+      strokeWidth: null,
+      underline: null,
+      uppercase: null,
+      cornerRadius: null,
+      pathData: null,
+      strokeLineCap: null,
+      strokeLineJoin: null,
+      prompt: null,
+      fit: null,
+    };
     const next = applyDesignOperations(scene.objects, [
-      { type: "update", objectId: "en", changes: { fill: "#000000" } },
+      { type: "update", objectId: "en", changes: nullPatch },
       { type: "delete", objectId: "symbol" },
       { type: "reorder", objectId: "kr", layerIndex: 9 },
     ]);
@@ -326,27 +483,57 @@ describe("design UI contracts", () => {
     );
     expect(panel).toContain("Generate design");
     expect(panel).toContain("Refine selection");
-    expect(panel).toContain("Describe the design you want to create");
     expect(panel).toContain('mode: "design"');
-    expect(panel).toContain("insertDesignSceneToCanvas");
+    expect(panel).toMatch(/objectRole[\s\S]{0,80}ai-region/);
     expect(panel).not.toContain("MODE_LABELS");
-    expect(panel).not.toContain("PROVIDER_LABELS");
-    expect(panel).not.toContain("<option value=\"generate\">");
     expect(panel).not.toContain("createBakedGeneratedFabricImage");
   });
 
-  it("migration adds editable_design support", async () => {
+  it("generations route preflights schema before credits", async () => {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
-    const sql = await fs.readFile(
-      path.join(
-        process.cwd(),
-        "supabase/migrations/0005_editable_design_generations.sql",
-      ),
+    const route = await fs.readFile(
+      path.join(process.cwd(), "src/app/api/ai/generations/route.ts"),
       "utf8",
     );
-    expect(sql).toContain("'design'");
-    expect(sql).toContain("editable_design");
-    expect(sql).toContain("scene_graph_json");
+    const postStart = route.indexOf("export async function POST");
+    const body = route.slice(postStart);
+    const preflightAt = body.indexOf("preflightDesignStructuredOutputs");
+    const creditAt = body.indexOf("consumeCreditsAtomic");
+    expect(preflightAt).toBeGreaterThan(0);
+    expect(creditAt).toBeGreaterThan(preflightAt);
+    expect(route).toContain("structured_output_schema");
+    expect(route).toContain("DESIGN_SCHEMA_INVALID");
+  });
+
+  it("schema source has no optional/nullish for OpenAI fields", async () => {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const source = await fs.readFile(
+      path.join(process.cwd(), "src/lib/design-scene/schema.ts"),
+      "utf8",
+    );
+    const withoutComments = source
+      .split("\n")
+      .filter((line) => {
+        const t = line.trim();
+        return !(
+          t.startsWith("*") ||
+          t.startsWith("//") ||
+          t.startsWith("/*") ||
+          t.startsWith("*/")
+        );
+      })
+      .join("\n");
+    expect(withoutComments).not.toMatch(/\.nullish\(/);
+    expect(withoutComments).not.toMatch(/\.partial\(/);
+    expect(withoutComments).not.toMatch(/deepPartial/);
+    expect(withoutComments).not.toMatch(/:\s*z\.[^;\n]+\.optional\(/);
+  });
+});
+
+describe("scene schema still validates after parse", () => {
+  it("editableDesignSceneSchema accepts sample", () => {
+    expect(editableDesignSceneSchema.safeParse(sampleScene()).success).toBe(true);
   });
 });

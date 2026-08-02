@@ -19,7 +19,7 @@ function baseFromFabric(obj: AnyObj, layerIndex: number): Omit<EditableDesignObj
     locked: Boolean(obj.locked),
     layerIndex,
     parentId: null,
-    semanticRole: typeof obj.semanticRole === "string" ? obj.semanticRole : undefined,
+    semanticRole: typeof obj.semanticRole === "string" ? obj.semanticRole : null,
   };
 }
 
