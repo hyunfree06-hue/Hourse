@@ -67,7 +67,10 @@ export async function completeGeneration(input: {
 
   const { error: uploadError } = await input.admin.storage
     .from("generated-assets")
-    .upload(path, buffer, { contentType: "image/png", upsert: false });
+    .upload(path, buffer, {
+      contentType: meta.mimeType || "image/png",
+      upsert: false,
+    });
 
   if (uploadError) {
     logServerError({
@@ -125,7 +128,7 @@ export async function completeGeneration(input: {
 
   const { data: signed } = await input.admin.storage
     .from("generated-assets")
-    .createSignedUrl(path, 60 * 30);
+    .createSignedUrl(path, 60 * 10);
 
   const { data: generation } = await input.admin
     .from("ai_generations")

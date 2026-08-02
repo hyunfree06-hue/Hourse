@@ -7,7 +7,6 @@ import {
   Circle,
   Line,
   IText,
-  FabricImage,
   FabricObject,
   ActiveSelection,
   Point,
@@ -544,18 +543,25 @@ export async function addImageToCanvas(
   url: string,
   options?: { left?: number; top?: number; assetId?: string },
 ) {
-  const img = await FabricImage.fromURL(url, { crossOrigin: "anonymous" });
-  img.set(
-    withCustomDefaults({
-      left: options?.left ?? 100,
-      top: options?.top ?? 100,
-      objectRole: "design",
-      assetId: options?.assetId,
-      name: "Image",
-    }),
+  const { loadFabricImageFromSignedUrl } = await import(
+    "@/lib/canvas/load-fabric-image"
   );
-  canvas.add(img);
-  canvas.setActiveObject(img);
-  canvas.requestRenderAll();
+  const { image: img, revoke } = await loadFabricImageFromSignedUrl(url);
+  try {
+    img.set(
+      withCustomDefaults({
+        left: options?.left ?? 100,
+        top: options?.top ?? 100,
+        objectRole: "design",
+        assetId: options?.assetId,
+        name: "Image",
+      }),
+    );
+    canvas.add(img);
+    canvas.setActiveObject(img);
+    canvas.requestRenderAll();
+  } finally {
+    requestAnimationFrame(() => revoke());
+  }
   window.dispatchEvent(new CustomEvent("hourse:dirty"));
 }

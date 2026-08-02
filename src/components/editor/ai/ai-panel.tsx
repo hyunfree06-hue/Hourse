@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { FabricImage, Rect } from "fabric";
+import { Rect } from "fabric";
 import { nanoid } from "nanoid";
 import { toast } from "sonner";
 import { X } from "lucide-react";
@@ -20,6 +20,22 @@ import {
 import { useEditorStore } from "@/stores/editor-store";
 import { withCustomDefaults } from "@/lib/canvas/custom-properties";
 import { aspectRatioLabel } from "@/lib/utils/geometry";
+import {
+  CANVAS_INSERT_ERROR_MESSAGE,
+  describeSignedUrlForLogs,
+  GeneratedImageLoadError,
+  loadFabricImageFromSignedUrl,
+} from "@/lib/canvas/load-fabric-image";
+
+function sanitizeUserError(message: string): string {
+  if (/supabase\.co|object\/sign|token=|X-Amz-|signed/i.test(message)) {
+    return CANVAS_INSERT_ERROR_MESSAGE;
+  }
+  if (/fabric:\s*error loading/i.test(message)) {
+    return CANVAS_INSERT_ERROR_MESSAGE;
+  }
+  return message;
+}
 
 type Availability = { openai: boolean; bfl: boolean };
 
@@ -77,9 +93,15 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
   const [quality, setQuality] = useState<AiQuality>("standard");
   const [fit, setFit] = useState<"cover" | "contain">("cover");
   const [loading, setLoading] = useState(false);
+  const [inserting, setInserting] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [generationId, setGenerationId] = useState<string | null>(null);
+  const [pendingInsert, setPendingInsert] = useState<{
+    id: string;
+    output_asset_id?: string;
+    signedUrl?: string;
+  } | null>(null);
   const [history, setHistory] = useState<
     Array<{ id: string; prompt: string; status: string }>
   >([]);
@@ -152,8 +174,17 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
     throw new Error("Generation timed out.");
   }
 
+  async function refreshSignedUrl(id: string): Promise<string | null> {
+    const res = await fetch(`/api/ai/generations/${id}/signed-url`, {
+      method: "POST",
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return typeof data.signedUrl === "string" ? data.signedUrl : null;
+  }
+
   async function placeResult(gen: {
-    signedUrl?: string;
+    signedUrl?: string | null;
     output_asset_id?: string;
     id: string;
   }) {
@@ -175,45 +206,102 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
         };
       }
     ).__hourse;
-    if (!api || !aiRegion || !gen.signedUrl) return;
+    if (!api || !aiRegion) {
+      throw new GeneratedImageLoadError("CANVAS_UNAVAILABLE");
+    }
+
+    let signedUrl = gen.signedUrl ?? null;
+    if (!signedUrl) {
+      signedUrl = await refreshSignedUrl(gen.id);
+    }
+    if (!signedUrl) {
+      throw new GeneratedImageLoadError("SIGNED_URL_MISSING");
+    }
+
+    const urlMeta = describeSignedUrlForLogs(signedUrl);
+    if (process.env.NODE_ENV === "development") {
+      console.info(
+        JSON.stringify({
+          stage: "client_image_insert",
+          generationId: gen.id,
+          assetId: gen.output_asset_id,
+          fabricVersion: "7",
+          origin: urlMeta.origin,
+          pathname: urlMeta.pathname,
+        }),
+      );
+    }
 
     api.history.save();
-    const img = await FabricImage.fromURL(gen.signedUrl, {
-      crossOrigin: "anonymous",
+    const { image: img, revoke } = await loadFabricImageFromSignedUrl(signedUrl, {
+      refreshSignedUrl: () => refreshSignedUrl(gen.id),
     });
-    const scaleX = aiRegion.width / (img.width || 1);
-    const scaleY = aiRegion.height / (img.height || 1);
-    const scale =
-      fit === "cover" ? Math.max(scaleX, scaleY) : Math.min(scaleX, scaleY);
-    // When server fitted to exact selection pixels, keep 1:1 placement.
-    const alreadyFitted =
-      Math.abs((img.width || 0) - aiRegion.width) < 1 &&
-      Math.abs((img.height || 0) - aiRegion.height) < 1;
-    img.set(
-      withCustomDefaults({
-        left: aiRegion.left,
-        top: aiRegion.top,
-        scaleX: alreadyFitted ? 1 : scale,
-        scaleY: alreadyFitted ? 1 : scale,
-        objectRole: "generated",
-        generatedBy: provider,
-        generationId: gen.id,
-        assetId: gen.output_asset_id,
-        name: "Generated image",
-        clipPath: new Rect({
+
+    try {
+      const scaleX = aiRegion.width / (img.width || 1);
+      const scaleY = aiRegion.height / (img.height || 1);
+      const scale =
+        fit === "cover" ? Math.max(scaleX, scaleY) : Math.min(scaleX, scaleY);
+      const alreadyFitted =
+        Math.abs((img.width || 0) - aiRegion.width) < 1 &&
+        Math.abs((img.height || 0) - aiRegion.height) < 1;
+
+      img.set(
+        withCustomDefaults({
           left: aiRegion.left,
           top: aiRegion.top,
-          width: aiRegion.width,
-          height: aiRegion.height,
-          absolutePositioned: true,
+          scaleX: alreadyFitted ? 1 : scale,
+          scaleY: alreadyFitted ? 1 : scale,
+          objectRole: "generated",
+          generatedBy: provider,
+          generationId: gen.id,
+          assetId: gen.output_asset_id,
+          name: "Generated image",
+          clipPath: new Rect({
+            left: aiRegion.left,
+            top: aiRegion.top,
+            width: aiRegion.width,
+            height: aiRegion.height,
+            absolutePositioned: true,
+          }),
         }),
-      }),
-    );
-    api.canvas.add(img);
-    api.canvas.setActiveObject(img);
-    api.canvas.requestRenderAll();
-    api.history.save();
-    window.dispatchEvent(new CustomEvent("hourse:dirty"));
+      );
+      api.canvas.add(img);
+      api.canvas.setActiveObject(img);
+      api.canvas.requestRenderAll();
+      api.history.save();
+      window.dispatchEvent(new CustomEvent("hourse:dirty"));
+    } finally {
+      // Revoke after Fabric has the decoded bitmap on the canvas.
+      requestAnimationFrame(() => revoke());
+    }
+  }
+
+  async function retryInsertToCanvas() {
+    if (!pendingInsert) return;
+    setInserting(true);
+    setError(null);
+    try {
+      const freshUrl = await refreshSignedUrl(pendingInsert.id);
+      await placeResult({
+        ...pendingInsert,
+        signedUrl: freshUrl ?? pendingInsert.signedUrl,
+      });
+      setPendingInsert(null);
+      setStatus("completed");
+      setHistory((prev) =>
+        prev.map((h) =>
+          h.id === pendingInsert.id ? { ...h, status: "completed" } : h,
+        ),
+      );
+      toast.success("Image added to canvas.");
+    } catch {
+      setStatus("insertion_failed");
+      setError(CANVAS_INSERT_ERROR_MESSAGE);
+      toast.error(CANVAS_INSERT_ERROR_MESSAGE);
+    } finally {
+      setInserting(false);
+    }
   }
 
   async function handleGenerate() {
@@ -297,18 +385,55 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
         completed = await pollGeneration(gen.id);
       }
 
-      await placeResult(completed);
-      setStatus("completed");
-      setHistory((prev) =>
-        prev.map((h) => (h.id === gen.id ? { ...h, status: "completed" } : h)),
-      );
-      toast.success("Image generated successfully.");
+      // Provider + storage succeeded — credits already charged. Insertion is separate.
+      setStatus("insertion_pending");
+      try {
+        await placeResult(completed);
+        setPendingInsert(null);
+        setStatus("completed");
+        setHistory((prev) =>
+          prev.map((h) => (h.id === gen.id ? { ...h, status: "completed" } : h)),
+        );
+        toast.success("Image generated successfully.");
+      } catch (insertError) {
+        setPendingInsert({
+          id: completed.id,
+          output_asset_id: completed.output_asset_id,
+          signedUrl: completed.signedUrl,
+        });
+        setStatus("insertion_failed");
+        setError(CANVAS_INSERT_ERROR_MESSAGE);
+        toast.error(CANVAS_INSERT_ERROR_MESSAGE);
+        if (process.env.NODE_ENV === "development") {
+          console.info(
+            JSON.stringify({
+              stage: "client_insertion_failed",
+              generationId: completed.id,
+              code:
+                insertError instanceof GeneratedImageLoadError
+                  ? insertError.code
+                  : "unknown",
+              httpStatus:
+                insertError instanceof GeneratedImageLoadError
+                  ? insertError.httpStatus
+                  : undefined,
+              contentType:
+                insertError instanceof GeneratedImageLoadError
+                  ? insertError.contentType
+                  : undefined,
+            }),
+          );
+        }
+      }
     } catch (err) {
       const message =
-        err instanceof Error ? err.message : "Generation failed.";
+        err instanceof Error
+          ? sanitizeUserError(err.message)
+          : "Generation failed.";
       setError(message);
       setStatus("failed");
       toast.error(message);
+      // Only restore optimistic credit display when generation itself failed
       setCredits(credits);
     } finally {
       setLoading(false);
@@ -453,9 +578,34 @@ export function AiPanel({ projectId, availability, onEnsureSaved }: Props) {
           </p>
         )}
         {error && (
-          <p className="text-[11px] text-red-600" role="alert">
-            {error}
-          </p>
+          <div className="space-y-2" role="alert">
+            <p className="text-[11px] text-red-600">{error}</p>
+            {pendingInsert && status === "insertion_failed" ? (
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-[11px]"
+                  loading={inserting}
+                  onClick={() => void retryInsertToCanvas()}
+                >
+                  Retry adding to canvas
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-[11px]"
+                  onClick={() => {
+                    setPendingInsert(null);
+                    setError(null);
+                    setStatus("completed");
+                  }}
+                >
+                  Dismiss
+                </Button>
+              </div>
+            ) : null}
+          </div>
         )}
 
         {/* Actions */}

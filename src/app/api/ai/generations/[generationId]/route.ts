@@ -47,7 +47,7 @@ export async function GET(_req: Request, { params }: Params) {
         if (asset) {
           const { data: signed } = await admin.storage
             .from(asset.storage_bucket)
-            .createSignedUrl(asset.storage_path, 60 * 30);
+            .createSignedUrl(asset.storage_path, 60 * 10);
           signedUrl = signed?.signedUrl ?? null;
         }
       }

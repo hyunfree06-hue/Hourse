@@ -48,6 +48,19 @@ export async function validateImageBuffer(buffer: Buffer): Promise<{
   height: number;
   mimeType: string;
 }> {
+  if (!buffer?.length) {
+    throw new AppError("INVALID_IMAGE", "Invalid image.", 400);
+  }
+
+  const mimeFromMagic = detectImageMime(buffer);
+  if (!mimeFromMagic) {
+    throw new AppError(
+      "INVALID_IMAGE",
+      "Uploaded bytes are not a valid image.",
+      400,
+    );
+  }
+
   const meta = await sharp(buffer).metadata();
   if (!meta.width || !meta.height) {
     throw new AppError("INVALID_IMAGE", "Invalid image.", 400);
@@ -58,8 +71,47 @@ export async function validateImageBuffer(buffer: Buffer): Promise<{
       ? "image/jpeg"
       : format === "webp"
         ? "image/webp"
-        : "image/png";
+        : format === "png"
+          ? "image/png"
+          : mimeFromMagic;
+
+  if (!["image/png", "image/jpeg", "image/webp"].includes(mime)) {
+    throw new AppError("INVALID_IMAGE", "Unsupported image format.", 400);
+  }
+
   return { width: meta.width, height: meta.height, mimeType: mime };
+}
+
+function detectImageMime(buffer: Buffer): string | null {
+  if (
+    buffer.length >= 8 &&
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47
+  ) {
+    return "image/png";
+  }
+  if (
+    buffer.length >= 3 &&
+    buffer[0] === 0xff &&
+    buffer[1] === 0xd8 &&
+    buffer[2] === 0xff
+  ) {
+    return "image/jpeg";
+  }
+  if (
+    buffer.length >= 12 &&
+    buffer.toString("ascii", 0, 4) === "RIFF" &&
+    buffer.toString("ascii", 8, 12) === "WEBP"
+  ) {
+    return "image/webp";
+  }
+  const head = buffer.subarray(0, Math.min(32, buffer.length)).toString("utf8");
+  if (head.trimStart().startsWith("{") || head.includes("base64")) {
+    return null;
+  }
+  return null;
 }
 
 export async function downloadHttpsImage(url: string): Promise<Buffer> {
